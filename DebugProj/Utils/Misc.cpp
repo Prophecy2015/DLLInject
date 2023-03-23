@@ -476,7 +476,7 @@ void CMisc::WriteLogV(LPCTSTR szFmt, va_list _ArgList)
 		//szTmp[len++] = '\0';
 		if (TRUE == ProcChnl::CanWrite(g_hOutChnl, len))
 		{
-			ProcChnl::GWrite(g_hOutChnl, (char*)pszTmp, len);
+			ProcChnl::GWrite(g_hOutChnl, (unsigned char*)pszTmp, len);
 		}
 
 		delete[]pszTmp;

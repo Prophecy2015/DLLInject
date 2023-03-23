@@ -30,9 +30,9 @@ namespace ProcChnl {
 
 	void CloseChannel(HCHANNEL& c);
 
-	int GRead(HCHANNEL c, char* szBuf, int iMaxSize, int iMilliTimeout = INFINITE);
+	int GRead(HCHANNEL c, unsigned char* szBuf, int iMaxSize, int iMilliTimeout = INFINITE);
 
-	int GWrite(HCHANNEL c, const char* szBuf, int iSize, int iMilliTimeout = INFINITE);
+	int GWrite(HCHANNEL c, unsigned char* szBuf, int iSize, int iMilliTimeout = INFINITE);
 
 	BOOL CanRead(HCHANNEL c);
 

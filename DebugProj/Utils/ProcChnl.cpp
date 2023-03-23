@@ -193,7 +193,7 @@ namespace ProcChnl {
 		}
 	}
 
-	int GRead(HCHANNEL c, char* szBuf, int iMaxSize, int iMilliTimeout)
+	int GRead(HCHANNEL c, unsigned char* szBuf, int iMaxSize, int iMilliTimeout)
 	{
 		if (!c.iValidFlag)
 		{
@@ -235,7 +235,7 @@ namespace ProcChnl {
 		return iRet;
 	}
 
-	int GWrite(HCHANNEL c, const char* szBuf, int iSize, int iMilliTimeout)
+	int GWrite(HCHANNEL c, unsigned char* szBuf, int iSize, int iMilliTimeout)
 	{
 		if (!c.iValidFlag)
 		{
