@@ -8,7 +8,7 @@ PVOID __cdecl MallocHook(size_t size)
 	if (TRUE == CMisc::BeginWork())
 	{
 		PVOID pRet = CALL_OLD(MallocHook)(size);
-		DLL_TRACE("MallocHook(%d) = %p", size, pRet);
+		DLL_TRACE(_T("MallocHook(%d) = %p"), size, pRet);
 
 		CMisc::EndWork();
 		return pRet;
@@ -20,7 +20,7 @@ PVOID __cdecl MallocHook(size_t size)
 extern "C" void DoDebugWork()
 {
 	// ²âÊÔ²éÕÒ·ûºÅ
-	PVOID pFuncAddr = CMisc::GetFunctionsVaFromSymbols("msvcrt.dll", "malloc");
+	PVOID pFuncAddr = CMisc::GetFunctionsVaFromSymbols(_T("msvcrt.dll"), _T("malloc"));
 	//if (pFuncAddr)
 	//{
 	//	PVOID pRet = ((mallocAddr)pFuncAddr)(256);
@@ -28,7 +28,7 @@ extern "C" void DoDebugWork()
 
 	// ¶¯Ì¬²å×®
 	BEGIN_TRANSACTION
-	DETOUR_ATTACH_SYMBOL("msvcrt.dll", "malloc", MallocHook);// 
+	DETOUR_ATTACH_SYMBOL(_T("msvcrt.dll"), _T("malloc"), MallocHook);// 
 	END_TRANSACTION
 }
 

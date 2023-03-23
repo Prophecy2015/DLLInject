@@ -57,12 +57,24 @@ BOOL CDebugSetDlg::OnInitDialog()
 	CDialogEx::OnInitDialog();
 
 	// TODO:  在此添加额外的初始化
-	int item = m_ctrlCodePage.AddString(_T("ANSI"));
+	int item = m_ctrlCodePage.AddString(
+#ifdef UNICODE
+	_T("UNICODE")
+#else
+	_T("ANSI")
+#endif
+	);
 	m_ctrlCodePage.SetItemData(item, 0);
 	item = m_ctrlCodePage.AddString(_T("UTF-8"));
 	m_ctrlCodePage.SetItemData(item, 1);
 
-	m_ctrlCodePage.SetCurSel(m_ctrlCodePage.FindString(0, (m_stuCfg.iCodePage == 1) ? _T("UTF-8") : _T("ANSI")));
+	m_ctrlCodePage.SetCurSel(m_ctrlCodePage.FindString(0, (m_stuCfg.iCodePage == 1) ? _T("UTF-8") :
+#ifdef UNICODE
+		_T("UNICODE")
+#else
+		_T("ANSI")
+#endif
+	));
 
 	UpdateData(FALSE);
 	return TRUE;  // return TRUE unless you set the focus to a control

@@ -5,7 +5,6 @@
 #include <map>
 #include <iostream>
 #include "TLHelp32.h"
-#include "tchar.h"
 #include "ProcChnl.h"
 
 #define MAX_CHANNEL_BUFF_SIZE 32 * 1024 * 1024
@@ -78,17 +77,17 @@ PVOID CMisc::GetExportFunctionsVa(const char* szModuleName, const char* szFuncNa
 	HMODULE hMod = ::GetModuleHandleA(szModuleName);
 	if (hMod == NULL)
 	{
-		DLL_TRACE("Can not find %s!", szModuleName);
+		DLL_TRACE(_T("Can not find %s!"), szModuleName);
 		return NULL;
 	}
 	DWORD dwFuncRva = GetExportFunctionsRva(hMod, szFuncName);
 	if (dwFuncRva == 0)
 	{
-		DLL_TRACE("Can not find %s in %s!", szFuncName, szModuleName);
+		DLL_TRACE(_T("Can not find %s in %s!"), szFuncName, szModuleName);
 		return NULL;
 	}
 
-	DLL_TRACE("%s!%s : %llX!", szModuleName, szFuncName, (PVOID)((PBYTE)hMod + dwFuncRva));
+	DLL_TRACE(_T("%s!%s : %llX!"), szModuleName, szFuncName, (PVOID)((PBYTE)hMod + dwFuncRva));
 
 	return (PVOID)((PBYTE)hMod + dwFuncRva);
 }
@@ -171,7 +170,7 @@ PVOID CMisc::FindMemory(PBYTE pDataBase, DWORD dwSize, const char* szModuleName 
 		HMODULE hMod = ::GetModuleHandleA(szModuleName);
 		if (hMod == NULL)
 		{
-			DLL_TRACE("Can not find %s!", szModuleName);
+			DLL_TRACE(_T("Can not find %s!"), szModuleName);
 			return NULL;
 		}
 
@@ -194,7 +193,7 @@ CALLBACK MY_PSYM_ENUMERATESYMBOLS_CALLBACK(
 	{
 		TCHAR szTmp[MAX_SYM_NAME] = { 0 };
 		_sntprintf_s(szTmp, sizeof(szTmp) / sizeof(TCHAR), _T("%s\n"), pSymInfo->Name);
-		fwrite(szTmp, 1, pSymInfo->NameLen + 1, pFile);
+		fwrite(szTmp, 1, sizeof(TCHAR) * (pSymInfo->NameLen + 1), pFile);
 	}
 	else
 	{
@@ -234,12 +233,12 @@ void CMisc::PrintModuleSymbols(PCTSTR szModuleName, PCSTR szSaveFile)
 		BOOL bRet = SymInitialize(hProcess, 0, FALSE);
 		if (FALSE == bRet)
 		{
-			DLL_TRACE("SymInitialize error ...");
+			DLL_TRACE(_T("SymInitialize error ..."));
 			break;
 		}
 
 		TCHAR SymbolPath[256];
-		GetCurrentDirectory(sizeof(SymbolPath), SymbolPath);
+		GetCurrentDirectory(sizeof(SymbolPath) / sizeof(TCHAR), SymbolPath);
 
 		_tcscat_s(SymbolPath, _T(";"));
 		_tcscat_s(SymbolPath, g_szPDBPath);
@@ -247,10 +246,10 @@ void CMisc::PrintModuleSymbols(PCTSTR szModuleName, PCSTR szSaveFile)
 		SymSetSearchPath(hProcess, SymbolPath);
 
 		TCHAR FileName[256];
-		GetCurrentDirectory(sizeof(FileName), FileName);
+		GetCurrentDirectory(sizeof(FileName) / sizeof(TCHAR), FileName);
 		_tcscat_s(FileName, _T("\\"));
 		_tcscat_s(FileName, szModuleName);
-		BaseOfDll = SymLoadModule(hProcess, NULL, FileName, NULL, (DWORD64)hMod, 0);
+		BaseOfDll = SymLoadModuleEx(hProcess, NULL, FileName, NULL, (DWORD64)hMod, 0, NULL, 0);
 		if (BaseOfDll == 0)
 		{
 			DLL_TRACE(_T("SymLoadModule %s error code:%d"), FileName, GetLastError());
@@ -277,7 +276,7 @@ void CMisc::PrintModuleSymbols(PCTSTR szModuleName, PCSTR szSaveFile)
 		BOOL bRet = SymUnloadModule(hProcess, BaseOfDll);
 		if (bRet == FALSE)
 		{
-			DLL_TRACE("SymUnloadModule Failed! err:%d", GetLastError());
+			DLL_TRACE(_T("SymUnloadModule Failed! err:%d"), GetLastError());
 		}
 		BaseOfDll = 0;
 	}
@@ -323,7 +322,7 @@ BOOL CMisc::InitConsole(HINSTANCE hIns)
 #define DEBUG_SETTING_PATH _T(".\\GDebugInfo.ini")
 BOOL CMisc::InitData()
 {
-	DWORD dwRet = ::GetPrivateProfileString(_T("Debug"), _T("PDB"), _T("."), g_szPDBPath, sizeof(g_szPDBPath), DEBUG_SETTING_PATH);
+	DWORD dwRet = ::GetPrivateProfileString(_T("Debug"), _T("PDB"), _T("."), g_szPDBPath, sizeof(g_szPDBPath) / sizeof(TCHAR), DEBUG_SETTING_PATH);
 	g_bConsole = ::GetPrivateProfileInt(_T("Debug"), _T("Mode"), 0, DEBUG_SETTING_PATH) == 1 ? TRUE : FALSE;
 	g_bUtf8 = ::GetPrivateProfileInt(_T("Debug"), _T("Code"), 1, DEBUG_SETTING_PATH) == 1 ? TRUE : FALSE;
 	return dwRet > 0;
@@ -435,48 +434,52 @@ void CMisc::OnDetourAttach(std::function<PVOID(void)> fn, PVOID fnHook)
 			if (0 != DetourAttach(&g_mapHook[fnHook], fnHook))
 			{
 				g_mapHook.erase(fnHook);
-				DLL_TRACE("DetourAttach return Failed!");
+				DLL_TRACE(_T("DetourAttach return Failed!"));
 			}
 		} 
 	}
 	else 
 	{
-		DLL_TRACE("fnHook is aleady in use!");
+		DLL_TRACE(_T("fnHook is aleady in use!"));
 	}
 }
 
 #define MAX_LOG_BUFF_SIZE 1024 * 1024 * 32
-void CMisc::WriteLog(const char* szFmt, ...)
+void CMisc::WriteLog(LPCTSTR szFmt, ...)
 {
 	va_list ap;
 	va_start(ap, szFmt);
-	WriteLog(szFmt, ap);
+	WriteLogV(szFmt, ap);
 	va_end(ap);
 }
 
-void CMisc::WriteLog(const char* szFmt, va_list _ArgList)
+void CMisc::WriteLogV(LPCTSTR szFmt, va_list _ArgList)
 {
 	if (g_bConsole)
 	{
-		vprintf(szFmt, _ArgList);
-		printf("\r\n");
+		_vtprintf(szFmt, _ArgList);
+		_tprintf(_T("\r\n"));
 	}
 	else
 	{
-		char szTmp[32 * 1024] = { 0 };
-		int len = vsnprintf_s(szTmp, sizeof(szTmp) - 3, szFmt, _ArgList);
+		TCHAR* pszTmp = new TCHAR[MAX_LOG_BUFF_SIZE] ;
+		memset(pszTmp, 0, MAX_LOG_BUFF_SIZE * sizeof(TCHAR));
+		int len = _vsntprintf_s(pszTmp, MAX_LOG_BUFF_SIZE, MAX_LOG_BUFF_SIZE - 3, szFmt, _ArgList);
 		if (len < 0)
 		{
+			delete[]pszTmp;
 			return;
 		}
 
-		szTmp[len++] = '\r';
-		szTmp[len++] = '\n';
+		pszTmp[len++] = _T('\r');
+		pszTmp[len++] = _T('\n');
 		//szTmp[len++] = '\0';
 		if (TRUE == ProcChnl::CanWrite(g_hOutChnl, len))
 		{
-			ProcChnl::GWrite(g_hOutChnl, szTmp, len);
+			ProcChnl::GWrite(g_hOutChnl, (char*)pszTmp, len);
 		}
+
+		delete[]pszTmp;
 	}
 }
 
@@ -520,11 +523,11 @@ PVOID CMisc::GetFunctionsVaFromSymbols(PCTSTR szModuleName, PCTSTR szFunctionNam
 		BOOL bRet = SymInitialize(hProcess, 0, FALSE);
 		if (FALSE == bRet)
 		{
-			DLL_TRACE("SymInitialize error ...");
+			DLL_TRACE(_T("SymInitialize error ..."));
 			break;
 		}
 		TCHAR SymbolPath[256];
-		GetCurrentDirectory(sizeof(SymbolPath), SymbolPath);
+		GetCurrentDirectory(sizeof(SymbolPath) / sizeof(TCHAR), SymbolPath);
 
 		if (nullptr != szSymPath)
 		{
@@ -538,10 +541,10 @@ PVOID CMisc::GetFunctionsVaFromSymbols(PCTSTR szModuleName, PCTSTR szFunctionNam
 		SymSetSearchPath(hProcess, SymbolPath);
 
 		TCHAR FileName[256];
-		GetCurrentDirectory(sizeof(FileName), FileName);
+		GetCurrentDirectory(sizeof(FileName) / sizeof(TCHAR), FileName);
 		_tcscat_s(FileName, _T("\\"));
 		_tcscat_s(FileName, szModuleName);
-		BaseOfDll = SymLoadModule(hProcess, NULL, FileName, NULL, (DWORD64)hMod, 0);
+		BaseOfDll = SymLoadModuleEx(hProcess, NULL, FileName, NULL, (DWORD64)hMod, 0, NULL, 0);
 		if (BaseOfDll == 0)
 		{
 			DLL_TRACE(_T("SymLoadModule %s error code:%d"), FileName, GetLastError());
@@ -571,7 +574,7 @@ PVOID CMisc::GetFunctionsVaFromSymbols(PCTSTR szModuleName, PCTSTR szFunctionNam
 		BOOL bRet = SymUnloadModule(hProcess, BaseOfDll);
 		if (bRet == FALSE)
 		{
-			DLL_TRACE("SymUnloadModule Failed! err:%d", GetLastError());
+			DLL_TRACE(_T("SymUnloadModule Failed! err:%d"), GetLastError());
 		}
 		BaseOfDll = 0;
 	}

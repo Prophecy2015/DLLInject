@@ -561,7 +561,7 @@ BOOL CDLLInjectDlg::StartReadFromChannel()
 		HCHANNEL s = ProcChnl::CreateChannel(_T("DllInject"), MAX_CHANNEL_BUFF_SIZE);
 		if (VALID_CHANNEL(s))
 		{
-			char* szTmp = new char[4096];
+			unsigned char* szTmp = new unsigned char[4096];
 			memset(szTmp, 0, sizeof(szTmp));
 			while (!m_bStopThread)
 			{
@@ -570,10 +570,10 @@ BOOL CDLLInjectDlg::StartReadFromChannel()
 					int iRead = ProcChnl::GRead(s, szTmp, 4096);
 					if (iRead > 0)
 					{
-						char* szMsg = new char[iRead + 1];
+						unsigned char* szMsg = new unsigned char[iRead + 1];
 						memcpy(szMsg, szTmp, iRead);
 						szMsg[iRead] = 0;
-						this->PostMessage(WM_READ_MEM, (WPARAM)szMsg, 0);
+						this->PostMessage(WM_READ_MEM, (WPARAM)szMsg, (LPARAM)iRead);
 					}
 				}
 
@@ -604,11 +604,11 @@ BOOL CDLLInjectDlg::StopReadFromChannel()
 BOOL CDLLInjectDlg::LoadConfig()
 {
 	TCHAR szTemp[256] = { 0 };
-	GetPrivateProfileString(_T("Debug"), _T("PDB"), _T("."), szTemp, sizeof(szTemp), DEBUG_SETTING_PATH);
+	GetPrivateProfileString(_T("Debug"), _T("PDB"), _T("."), szTemp, sizeof(szTemp) / sizeof(TCHAR), DEBUG_SETTING_PATH);
 	m_stuConfig.strPDBPath = szTemp;
 
 	m_stuConfig.iPrintMode = GetPrivateProfileInt(_T("Debug"), _T("Mode"), 0, DEBUG_SETTING_PATH);
-	m_stuConfig.iCodePage = GetPrivateProfileInt(_T("Debug"), _T("Code"), 1, DEBUG_SETTING_PATH);
+	m_stuConfig.iCodePage = GetPrivateProfileInt(_T("Debug"), _T("Code"), 0, DEBUG_SETTING_PATH);
 
 	return TRUE;
 }
@@ -639,10 +639,11 @@ void CDLLInjectDlg::OnTcnSelchangeTabInfo(NMHDR *pNMHDR, LRESULT *pResult)
 
 LRESULT CDLLInjectDlg::OnReadMemoryData(WPARAM wParam, LPARAM lParam)
 {
-	char* szMsg = (char*)wParam;
+	unsigned char* szMsg = (unsigned char*)wParam;
+	int iSize = (int)lParam;
 	if (szMsg)
 	{
-		m_strLogInfo += (m_stuConfig.iCodePage == 1) ? FromUtf8(szMsg) : CString(szMsg);
+		m_strLogInfo += (m_stuConfig.iCodePage == 1) ? FromUtf8((char*)szMsg) : CString((wchar_t*)szMsg);
 		UpdateData(FALSE);
 		delete[]szMsg;
 		m_ctrlRichEdit.PostMessage(WM_VSCROLL, SB_BOTTOM, 0);
@@ -705,13 +706,23 @@ void CDLLInjectDlg::OnBnClickedCheckNotify()
 
 CString CDLLInjectDlg::FromUtf8(const char* szUtf8)
 {
-	CStringW strRet;
+	CString strRet;
 
 	int WLength = MultiByteToWideChar(CP_UTF8, 0, szUtf8, -1, NULL, NULL);
 	LPWSTR pszW = new wchar_t[WLength + 1];
 	MultiByteToWideChar(CP_UTF8, 0, szUtf8, -1, pszW, WLength);
 	pszW[WLength] = 0;
-	strRet = CStringW(pszW);
+
+#ifndef UNICODE
+	int MLength = WideCharToMultiByte(CP_ACP, 0, pszW, WLength, NULL, -1, NULL, NULL);
+	LPSTR pszC = new char[MLength + 1];
+	WideCharToMultiByte(CP_ACP, 0, pszW, WLength, pszC, MLength, NULL, NULL);
+	strRet = pszC;
+	delete[]pszC;
+#else
+	strRet = pszW;
+#endif
+
 	delete[]pszW;
 
 	return strRet;

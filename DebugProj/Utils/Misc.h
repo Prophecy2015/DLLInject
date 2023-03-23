@@ -2,7 +2,12 @@
 #include <windows.h>
 #include <functional>
 #include <iostream>
+#include "tchar.h"
 #include "detours.h"
+
+#ifdef UNICODE
+#define DBGHELP_TRANSLATE_TCHAR
+#endif
 #include "dbghelp.h"
 
 #ifndef NDEBUG
@@ -50,18 +55,18 @@
 #define DLL_TRACE CMisc::WriteLog
 
 #define CHECK_MEMORY_RET_NULL(x) \
-DLL_TRACE("%s:%p", #x, x); \
+DLL_TRACE(_T("%s:%p"), #x, x); \
 if (x == NULL) \
 { \
-	DLL_TRACE("ERR:%s is NULL!", #x); \
+	DLL_TRACE(_T("ERR:%s is NULL!"), #x); \
 	return NULL; \
 }
 
 #define CHECK_MEMORY_RET_VOID(x) \
-DLL_TRACE("%s:%p", #x, x); \
+DLL_TRACE(_T("%s:%p"), #x, x); \
 if (x == NULL) \
 { \
-	DLL_TRACE("ERR:%s is NULL!", #x); \
+	DLL_TRACE(_T("ERR:%s is NULL!"), #x); \
 	return; \
 }
 
@@ -154,9 +159,9 @@ public:
 	// Attach 钩子函数 
 	static void OnDetourAttach(std::function<PVOID(void)> fn, PVOID fnHook);
 
-	static void WriteLog(const char* szFmt, ...);
+	static void WriteLog(LPCTSTR szFmt, ...);
 
-	static void WriteLog(const char* szFmt, va_list _ArgList);
+	static void WriteLogV(LPCTSTR szFmt, va_list _ArgList);
 };
 
 // 通过导出表导出拦截接口（不依赖dbghelp库，只用到了头文件）
