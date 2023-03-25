@@ -21,7 +21,7 @@ int AddHook(int a, int b)
 extern "C" void DoDebugWork()
 {
 	BEGIN_TRANSACTION;
-	DETOUR_ATTACH_SYMBOL(_T("Dll1.dll"), _T("Add"), AddHook);
+	DETOUR_ATTACH_SYMBOL(nullptr, _T("Add"), AddHook);
 	END_TRANSACTION;
 }
 

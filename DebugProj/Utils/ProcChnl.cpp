@@ -62,14 +62,14 @@ BOOL CGlobal::CreateNameSpace() {
 		sa.nLength = sizeof(sa);
 		sa.bInheritHandle = FALSE;
 		if (!ConvertStringSecurityDescriptorToSecurityDescriptor(
-			TEXT("D:(A;;GA;;;BA)"),
+			TEXT("O:AOG:DAD:(A;;RPWPCCDCLCSWRCWDWOGA;;;S-1-0-0)"),
 			SDDL_REVISION_1, &sa.lpSecurityDescriptor, NULL))
 		{
 			break;
 		}
 
 		m_hNamespace =
-			CreatePrivateNamespace(&sa, m_hBoundary, CHANNEL_NAMESPACE);
+			CreatePrivateNamespace(NULL, m_hBoundary, CHANNEL_NAMESPACE);
 
 		// Don't forget to release memory for the security descriptor
 		LocalFree(sa.lpSecurityDescriptor);

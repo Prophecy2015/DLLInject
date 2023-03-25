@@ -63,7 +63,7 @@ BOOL CGlobal::CreateNameSpace() {
 		sa.nLength = sizeof(sa);
 		sa.bInheritHandle = FALSE;
 		if (!ConvertStringSecurityDescriptorToSecurityDescriptor(
-			TEXT("D:(A;;GA;;;BA)"),
+			TEXT("O:AOG:DAD:(A;;RPWPCCDCLCSWRCWDWOGA;;;S-1-0-0)"),
 			SDDL_REVISION_1, &sa.lpSecurityDescriptor, NULL))
 		{
 			break;

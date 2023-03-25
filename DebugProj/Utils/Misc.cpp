@@ -474,9 +474,9 @@ void CMisc::WriteLogV(LPCTSTR szFmt, va_list _ArgList)
 		pszTmp[len++] = _T('\r');
 		pszTmp[len++] = _T('\n');
 		//szTmp[len++] = '\0';
-		if (TRUE == ProcChnl::CanWrite(g_hOutChnl, len))
+		if (TRUE == ProcChnl::CanWrite(g_hOutChnl, len * sizeof(TCHAR)))
 		{
-			ProcChnl::GWrite(g_hOutChnl, (unsigned char*)pszTmp, len);
+			ProcChnl::GWrite(g_hOutChnl, (unsigned char*)pszTmp, len * sizeof(TCHAR));
 		}
 
 		delete[]pszTmp;
@@ -506,16 +506,35 @@ PVOID CMisc::GetFunctionsVaFromSymbols(PCTSTR szModuleName, PCTSTR szFunctionNam
 	Options = Options | SYMOPT_DEBUG;
 	SymSetOptions(Options);
 
-	if (szModuleName)
+	TCHAR szAppPathName[256] = { 0 };
+	if (nullptr == szModuleName)
+	{
+		int iRead = GetModuleFileName(0, szAppPathName, 256);
+		if (0 == iRead)
+		{
+			DLL_TRACE(_T("Cannot GetModuleFileName!"));
+			return NULL;
+		}
+
+		hMod = GetModuleHandle(szAppPathName);
+
+		if (hMod == 0)
+		{
+			DLL_TRACE(_T("Cannot find module %s"), szAppPathName);
+			return NULL;
+		}
+	}
+	else
 	{
 		hMod = GetModuleHandle(szModuleName);
+
+		if (hMod == 0)
+		{
+			DLL_TRACE(_T("Cannot find module %s"), szModuleName);
+			return NULL;
+		}
 	}
 
-	if (hMod == 0)
-	{
-		DLL_TRACE(_T("Cannot find module %s"), szModuleName);
-		return NULL;
-	}
 
 	do 
 	{
@@ -540,10 +559,17 @@ PVOID CMisc::GetFunctionsVaFromSymbols(PCTSTR szModuleName, PCTSTR szFunctionNam
 
 		SymSetSearchPath(hProcess, SymbolPath);
 
-		TCHAR FileName[256];
-		GetCurrentDirectory(sizeof(FileName) / sizeof(TCHAR), FileName);
-		_tcscat_s(FileName, _T("\\"));
-		_tcscat_s(FileName, szModuleName);
+		TCHAR FileName[256] = { 0 };
+		if (nullptr != szModuleName)
+		{
+			GetCurrentDirectory(sizeof(FileName) / sizeof(TCHAR), FileName);
+			_tcscat_s(FileName, _T("\\"));
+			_tcscat_s(FileName, szModuleName);
+		}
+		else
+		{
+			_tcscpy_s(FileName, szAppPathName);
+		}
 		BaseOfDll = SymLoadModuleEx(hProcess, NULL, FileName, NULL, (DWORD64)hMod, 0, NULL, 0);
 		if (BaseOfDll == 0)
 		{
@@ -561,11 +587,11 @@ PVOID CMisc::GetFunctionsVaFromSymbols(PCTSTR szModuleName, PCTSTR szFunctionNam
 		if (TRUE == SymFromName(hProcess, szFunctionName, pSym))
 		{
 			pRet = (PVOID)pSym->Address;
-			DLL_TRACE(_T("%s!%s: %llX"), szModuleName, szFunctionName, pRet);
+			DLL_TRACE(_T("%s!%s: %llX"), szModuleName ? szModuleName : szAppPathName, szFunctionName, pRet);
 		}
 		else
 		{
-			DLL_TRACE(_T("Can not find symbol %s!%s"), szModuleName, szFunctionName);
+			DLL_TRACE(_T("Can not find symbol %s!%s"), szModuleName ? szModuleName : szAppPathName, szFunctionName);
 		}
 	} while (false);
 
