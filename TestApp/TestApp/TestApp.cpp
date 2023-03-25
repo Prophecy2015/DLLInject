@@ -5,8 +5,10 @@
 #include <thread>
 #include <chrono>
 
-#pragma comment(lib, "Dll1.lib")
-__declspec(dllimport) int Add(int a, int b);
+int Add(int a, int b)
+{
+	return a + b - 123;
+}
 
 int main()
 {

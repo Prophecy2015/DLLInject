@@ -206,7 +206,7 @@ void CDLLInjectDlg::OnBnClickedBtnSelPid()
 	CPIDListDlg dlg;
 	if (IDOK == dlg.DoModal())
 	{
-		m_strProcName.Format(_T("%s"), dlg.GetSelExeName());
+		m_strProcName.Format(_T("%s"), dlg.GetSelExeName().GetBuffer());
 		UpdateData(FALSE);
 	}
 }
@@ -267,7 +267,15 @@ BOOL CDLLInjectDlg::InjectedDLL()
 #endif
 
 	// Get the real address of LoadLibraryW in Kernel32.dll
-	PTHREAD_START_ROUTINE pfnThreadRtn = (PTHREAD_START_ROUTINE)GetProcAddress(GetModuleHandle(TEXT("Kernel32")), szFunc);
+
+	HMODULE hModule = GetModuleHandle(_T("Kernel32.dll"));
+	if (0 == hModule)
+	{
+		InsertInformation(_T("进程(%d)中找不到模块Kernel32.dll!!! [%d]\n"), dwPID, GetLastError());
+		return FALSE;
+	}
+
+	PTHREAD_START_ROUTINE pfnThreadRtn = (PTHREAD_START_ROUTINE)GetProcAddress(hModule, szFunc);
 	if (pfnThreadRtn == NULL)
 	{
 		InsertInformation(_T("无法在kernel32.dll找到%s 函数！\n"), szFunc);
@@ -276,7 +284,7 @@ BOOL CDLLInjectDlg::InjectedDLL()
 	}
 
 	// Calculate the number of bytes needed for the DLL's pathname
-	DWORD dwSize = m_strDLLName.GetLength() * sizeof(TCHAR);
+	size_t dwSize = m_strDLLName.GetLength() * sizeof(TCHAR);
 	// Allocate space in the remote process for the pathname
 	LPVOID pszLibFileRemote = (PWSTR)VirtualAllocEx(hProcess, NULL, dwSize + 1, MEM_COMMIT, PAGE_READWRITE);
 	if (pszLibFileRemote == NULL)
@@ -377,6 +385,13 @@ BOOL CDLLInjectDlg::PulledOutDLL()
 		return FALSE;
 	}
 	hModule = GetModuleHandle(_T("Kernel32.dll"));
+	if (0 == hModule)
+	{
+		InsertInformation(_T("进程(%d)中找不到模块Kernel32.dll!!! [%d]\n"), dwPID, GetLastError());
+		CloseHandle(hSnapshot);
+		return FALSE;
+	}
+
 	pThreadProc = (LPTHREAD_START_ROUTINE)GetProcAddress(hModule, "FreeLibrary");
 	hThread = CreateRemoteThread(hProcess, NULL, 0, pThreadProc, me.modBaseAddr, 0, NULL);
 	if (hThread == NULL)
@@ -570,9 +585,8 @@ BOOL CDLLInjectDlg::StartReadFromChannel()
 					int iRead = ProcChnl::GRead(s, szTmp, 4096);
 					if (iRead > 0)
 					{
-						unsigned char* szMsg = new unsigned char[iRead + 1];
+						unsigned char* szMsg = new unsigned char[iRead];
 						memcpy(szMsg, szTmp, iRead);
-						szMsg[iRead] = 0;
 						this->PostMessage(WM_READ_MEM, (WPARAM)szMsg, (LPARAM)iRead);
 					}
 				}
@@ -643,7 +657,7 @@ LRESULT CDLLInjectDlg::OnReadMemoryData(WPARAM wParam, LPARAM lParam)
 	int iSize = (int)lParam;
 	if (szMsg)
 	{
-		m_strLogInfo += (m_stuConfig.iCodePage == 1) ? FromUtf8((char*)szMsg) : CString((wchar_t*)szMsg);
+		m_strLogInfo += (m_stuConfig.iCodePage == 1) ? FromUtf8((char*)szMsg) : CString((TCHAR*)szMsg, iSize / sizeof(TCHAR) );
 		UpdateData(FALSE);
 		delete[]szMsg;
 		m_ctrlRichEdit.PostMessage(WM_VSCROLL, SB_BOTTOM, 0);
@@ -663,10 +677,12 @@ void CDLLInjectDlg::OnSize(UINT nType, int cx, int cy)
 	//	GetDlgItem(IDC_LIST_INFO)->MoveWindow(rtInfo);
 	//	GetDlgItem(IDC_RICHEDIT_INFO)->MoveWindow(rtInfo);
 	//}
-
-	CRect rtInfo(12, 103, cx - 10, cy - 10);
-	m_ctrlInfo.MoveWindow(rtInfo);
-	m_ctrlRichEdit.MoveWindow(rtInfo);
+	if (nullptr != m_ctrlRichEdit.GetSafeHwnd())
+	{
+		CRect rtInfo(12, 103, cx - 10, cy - 10);
+		m_ctrlInfo.MoveWindow(rtInfo);
+		m_ctrlRichEdit.MoveWindow(rtInfo);
+	}
 }
 
 void CDLLInjectDlg::OnGetMinMaxInfo(MINMAXINFO* lpMMI)
@@ -708,7 +724,7 @@ CString CDLLInjectDlg::FromUtf8(const char* szUtf8)
 {
 	CString strRet;
 
-	int WLength = MultiByteToWideChar(CP_UTF8, 0, szUtf8, -1, NULL, NULL);
+	size_t WLength = MultiByteToWideChar(CP_UTF8, 0, szUtf8, -1, NULL, NULL);
 	LPWSTR pszW = new wchar_t[WLength + 1];
 	MultiByteToWideChar(CP_UTF8, 0, szUtf8, -1, pszW, WLength);
 	pszW[WLength] = 0;
