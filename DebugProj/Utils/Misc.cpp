@@ -94,7 +94,7 @@ PVOID CMisc::GetExportFunctionsVa(PCTSTR szModuleName, PCTSTR szFuncName)
 	}
 	_tstring strAppName = GetFileName(g_szAppPathName);
 
-	DLL_TRACE(_T("%s!%s : %llX!"), szModuleName == nullptr ? strAppName.c_str() : szModuleName, szFuncName, (PVOID)((PBYTE)hMod + dwFuncRva));
+	DLL_TRACE(_T("%s!%s : %IX!"), szModuleName == nullptr ? strAppName.c_str() : szModuleName, szFuncName, (PVOID)((PBYTE)hMod + dwFuncRva));
 
 	return (PVOID)((PBYTE)hMod + dwFuncRva);
 }
@@ -146,7 +146,7 @@ PVOID CMisc::FindModuleMemory(HMODULE hModule, PBYTE pDataBase, DWORD dwSize)
 	return NULL;
 }
 
-PVOID CMisc::FindMemory(PBYTE pDataBase, DWORD dwSize, const char* szModuleName /*= nullptr*/)
+PVOID CMisc::FindMemory(PBYTE pDataBase, DWORD dwSize, PCTSTR szModuleName /*= nullptr*/)
 {
 	if (szModuleName == nullptr)
 	{
@@ -174,7 +174,7 @@ PVOID CMisc::FindMemory(PBYTE pDataBase, DWORD dwSize, const char* szModuleName 
 	}
 	else
 	{
-		HMODULE hMod = ::GetModuleHandleA(szModuleName);
+		HMODULE hMod = ::GetModuleHandle(szModuleName);
 		if (hMod == NULL)
 		{
 			DLL_TRACE(_T("Can not find %s!"), szModuleName);
@@ -308,12 +308,12 @@ void CMisc::ShowTraceStarck()
 			}
 			else
 			{
-				_sntprintf_s(szFrameInfo, FRAME_INFO_LEN - 1, _T("\t0x%llX %s()\n"), stSymbolInfo.si.Address, stSymbolInfo.si.Name);
+				_sntprintf_s(szFrameInfo, FRAME_INFO_LEN - 1, _T("\t0x%IX %s()\n"), stSymbolInfo.si.Address, stSymbolInfo.si.Name);
 			}
 		}
 		else
 		{
-			_sntprintf_s(szFrameInfo, FRAME_INFO_LEN - 1, _T("\t0x%llX can not find symbol\n"), address);
+			_sntprintf_s(szFrameInfo, FRAME_INFO_LEN - 1, _T("\t0x%IX can not find symbol\n"), address);
 		}
 
 		_tcscat_s(szStackInfo, szFrameInfo);
@@ -321,6 +321,83 @@ void CMisc::ShowTraceStarck()
 	g_DbgHelper.m_pSymCleanup(hProcess);
 
 	DLL_TRACE(_T("%s"), szStackInfo);
+}
+
+
+void CMisc::ShowContextStackTrace(CONTEXT& cr)
+{
+	if (!g_DbgHelper.Init())
+	{
+		DLL_TRACE(_T("Load DbgHelp.dll failed!"));
+		return;
+	}
+
+	if (!g_DbgHelper.m_pStackWalk ||
+		!g_DbgHelper.m_pSymFunctionTableAccess ||
+		!g_DbgHelper.m_pSymGetModuleBase)
+	{
+		printf("DbgHelp.dll Leak interface!");
+		return;
+	}
+
+	TCHAR SymbolPath[256] = { 0 };
+	GetCurrentDirectory(sizeof(SymbolPath) / sizeof(TCHAR), SymbolPath);
+
+	_tcscat_s(SymbolPath, _T(";"));
+	_tcscat_s(SymbolPath, g_szPDBPath);
+
+	auto hProcess = GetCurrentProcess();
+	auto hThread = GetCurrentThread();
+	g_DbgHelper.m_pSymInitialize(hProcess, SymbolPath, TRUE);
+
+	DWORD dwMachineType = IMAGE_FILE_MACHINE_UNKNOWN;
+
+	STACKFRAME sf = { 0 };
+#ifdef _IMAGEHLP64
+	dwMachineType = IMAGE_FILE_MACHINE_AMD64;
+	sf.AddrPC.Offset = cr.Rip;
+	sf.AddrPC.Mode = AddrModeFlat;
+	sf.AddrFrame.Offset = cr.Rbp;
+	sf.AddrFrame.Mode = AddrModeFlat;
+	sf.AddrStack.Offset = cr.Rsp;
+	sf.AddrStack.Mode = AddrModeFlat;
+#else
+	dwMachineType = IMAGE_FILE_MACHINE_I386;
+	sf.AddrPC.Offset = cr.Eip;
+	sf.AddrPC.Mode = AddrModeFlat;
+	sf.AddrFrame.Offset = cr.Ebp;
+	sf.AddrFrame.Mode = AddrModeFlat;
+	sf.AddrStack.Offset = cr.Esp;
+	sf.AddrStack.Mode = AddrModeFlat;
+#endif
+
+	while (g_DbgHelper.m_pStackWalk(dwMachineType, hProcess, hThread, &sf, &cr, 0, g_DbgHelper.m_pSymFunctionTableAccess, g_DbgHelper.m_pSymGetModuleBase, nullptr))
+	{
+		auto address = sf.AddrPC.Offset;
+		DWORD64 dwDisplacement = 0;
+		SYMBOL_INFO_PACKAGE symbol = { 0 };
+		symbol.si.SizeOfStruct = sizeof(symbol.si);
+		symbol.si.MaxNameLen = sizeof(symbol.name) / sizeof(TCHAR);
+		if (g_DbgHelper.m_pSymFromAddr && TRUE == g_DbgHelper.m_pSymFromAddr(hProcess, address, &dwDisplacement, &symbol.si))
+		{
+			DWORD dwLineDisplacement = 0;
+			IMAGEHLP_LINE line = { sizeof(line) };
+			if (g_DbgHelper.m_pSymGetLineFromAddr && TRUE == g_DbgHelper.m_pSymGetLineFromAddr(hProcess, address, &dwLineDisplacement, &line))
+			{
+				_tprintf(_T("\t%IX %s + %Id(%s:%u)\n"), address, symbol.si.Name, dwDisplacement, line.FileName, line.LineNumber);
+			}
+			else
+			{
+				_tprintf(_T("\t%IX %s + %Id\n"), address, symbol.si.Name, dwDisplacement);
+			}
+		}
+		else
+		{
+			_tprintf(_T("\t%IX Cannot find symbol!\n"), address);
+		}
+	}
+
+	g_DbgHelper.m_pSymCleanup(hProcess);
 }
 
 BOOL
@@ -813,7 +890,7 @@ PVOID CMisc::GetFunctionsVaFromSymbols(PCTSTR szModuleName, PCTSTR szFunctionNam
 		if (TRUE == g_DbgHelper.m_pSymFromName(hProcess, szFunctionName, pSym))
 		{
 			pRet = (PVOID)pSym->Address;
-			DLL_TRACE(_T("%s!%s: %llX"), szModuleName ? szModuleName : strAppName.c_str(), szFunctionName, pRet);
+			DLL_TRACE(_T("%s!%s: %IX"), szModuleName ? szModuleName : strAppName.c_str(), szFunctionName, pRet);
 		}
 		else
 		{

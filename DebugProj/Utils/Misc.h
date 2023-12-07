@@ -148,7 +148,7 @@ public:
 	* \return 若查找成功，返回指定内存块在当前进程中的虚拟地址，若查找失败，则返回NULL
 	* \note 该函数以二进制数据匹配虚拟地址，主要用于定位任意位置使用，但是，对位置地址的操作很容易导致调试进程崩溃，慎用。
 	*/
-	static PVOID FindMemory(PBYTE pDataBase, DWORD dwSize, const char* szModuleName = nullptr);
+	static PVOID FindMemory(PBYTE pDataBase, DWORD dwSize, PCTSTR szModuleName = nullptr);
 
 	/**
 	* \brief 获取指定地址的符号名称，可能获取失败
@@ -170,6 +170,12 @@ public:
 	* \return void
 	*/
 	static void ShowTraceStarck();
+
+	/**
+	* \brief 显示指定上下文的堆栈
+	* \return void
+	*/
+	static void ShowContextStackTrace(CONTEXT& cr);
 
 	// Utils
 	// 打印某个模块的所有符号
