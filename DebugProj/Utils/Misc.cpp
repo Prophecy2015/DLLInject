@@ -4,8 +4,12 @@
 #include <mutex>
 #include <map>
 #include <iostream>
+#include <sstream>
+#include <algorithm>
 #include "TLHelp32.h"
 #include "ProcChnl.h"
+#include "time.h"
+#include "DbgHelper.h"
 
 #define MAX_CHANNEL_BUFF_SIZE 32 * 1024 * 1024
 
@@ -17,9 +21,11 @@ std::map<PVOID/*HOOK ADDR*/, PVOID/*OLD ADDR*/> g_mapHook;
 TCHAR g_szPDBPath[256] = { 0 };
 BOOL		g_bConsole = FALSE;
 BOOL		g_bUtf8 = TRUE;
-HCHANNEL g_hOutChnl = { 0 };
+HCHANNEL	g_hOutChnl = { 0 };
+CDbgHelper  g_DbgHelper;
+TCHAR		g_szAppPathName[256] = { 0 };
 
-DWORD CMisc::GetExportFunctionsRva(HMODULE hModule, const char* strFuncName)
+DWORD CMisc::GetExportFunctionsRva(HMODULE hModule, PCTSTR strFuncName)
 {
 	// ªÒ»°ExportsTableRva
 	DWORD dwExportTableRva = 0;
@@ -55,11 +61,11 @@ DWORD CMisc::GetExportFunctionsRva(HMODULE hModule, const char* strFuncName)
 
 	// 
 	PIMAGE_EXPORT_DIRECTORY pExportDir = (PIMAGE_EXPORT_DIRECTORY)((PBYTE)pByte + dwExportTableRva);
-	for (int i = 0; i < pExportDir->NumberOfNames; i++)
+	for (auto i = 0; i < pExportDir->NumberOfNames; i++)
 	{
 		std::string strName = (char*)((PBYTE)pByte + *(DWORD*)((PBYTE)pByte + pExportDir->AddressOfNames + i * sizeof(DWORD)));
 
-		if (strName == strFuncName)
+		if (strName == TSTRCONV(strFuncName))
 		{
 			WORD wOrdinal = *(WORD*)((PBYTE)pByte + pExportDir->AddressOfNameOrdinals + i * sizeof(WORD));
 			if (wOrdinal < pExportDir->NumberOfFunctions)
@@ -72,9 +78,9 @@ DWORD CMisc::GetExportFunctionsRva(HMODULE hModule, const char* strFuncName)
 	return 0;
 }
 
-PVOID CMisc::GetExportFunctionsVa(const char* szModuleName, const char* szFuncName)
+PVOID CMisc::GetExportFunctionsVa(PCTSTR szModuleName, PCTSTR szFuncName)
 {
-	HMODULE hMod = ::GetModuleHandleA(szModuleName);
+	HMODULE hMod = ::GetModuleHandle(szModuleName);
 	if (hMod == NULL)
 	{
 		DLL_TRACE(_T("Can not find %s!"), szModuleName);
@@ -86,8 +92,9 @@ PVOID CMisc::GetExportFunctionsVa(const char* szModuleName, const char* szFuncNa
 		DLL_TRACE(_T("Can not find %s in %s!"), szFuncName, szModuleName);
 		return NULL;
 	}
+	_tstring strAppName = GetFileName(g_szAppPathName);
 
-	DLL_TRACE(_T("%s!%s : %llX!"), szModuleName, szFuncName, (PVOID)((PBYTE)hMod + dwFuncRva));
+	DLL_TRACE(_T("%s!%s : %IX!"), szModuleName == nullptr ? strAppName.c_str() : szModuleName, szFuncName, (PVOID)((PBYTE)hMod + dwFuncRva));
 
 	return (PVOID)((PBYTE)hMod + dwFuncRva);
 }
@@ -139,7 +146,7 @@ PVOID CMisc::FindModuleMemory(HMODULE hModule, PBYTE pDataBase, DWORD dwSize)
 	return NULL;
 }
 
-PVOID CMisc::FindMemory(PBYTE pDataBase, DWORD dwSize, const char* szModuleName /*= nullptr*/)
+PVOID CMisc::FindMemory(PBYTE pDataBase, DWORD dwSize, PCTSTR szModuleName /*= nullptr*/)
 {
 	if (szModuleName == nullptr)
 	{
@@ -167,7 +174,7 @@ PVOID CMisc::FindMemory(PBYTE pDataBase, DWORD dwSize, const char* szModuleName 
 	}
 	else
 	{
-		HMODULE hMod = ::GetModuleHandleA(szModuleName);
+		HMODULE hMod = ::GetModuleHandle(szModuleName);
 		if (hMod == NULL)
 		{
 			DLL_TRACE(_T("Can not find %s!"), szModuleName);
@@ -180,6 +187,218 @@ PVOID CMisc::FindMemory(PBYTE pDataBase, DWORD dwSize, const char* szModuleName 
 	return NULL;
 }
 
+_tstring CMisc::SymbolStrFromAddr(DWORD64 address, PCTSTR szSymPath /*= nullptr*/)
+{
+	if (!g_DbgHelper.Init())
+	{
+		DLL_TRACE(_T("Load DbgHelp.dll failed!"));
+		return _T("");
+	}
+
+	_tstring strSymStr;
+	constexpr int iBufferSize = sizeof(SYMBOL_INFO) + 256;
+	char szBuffer[iBufferSize] = { 0 };
+
+	TCHAR SymbolPath[256];
+	GetCurrentDirectory(sizeof(SymbolPath) / sizeof(TCHAR), SymbolPath);
+
+	_tcscat_s(SymbolPath, _T(";"));
+	_tcscat_s(SymbolPath, g_szPDBPath);
+
+	HANDLE hProcess = GetCurrentProcess();
+	BOOL bRet = g_DbgHelper.m_pSymInitialize(hProcess, SymbolPath, TRUE);
+	if (FALSE == bRet)
+	{
+		DLL_TRACE(_T("SymInitialize error ..."));
+		return _T("");
+	}
+
+	do
+	{
+		SYMBOL_INFO* pInfo = (SYMBOL_INFO*)szBuffer;
+		pInfo->MaxNameLen = 256;
+
+		if (FALSE == g_DbgHelper.m_pSymFromAddr(hProcess, address, 0, pInfo))
+		{
+			DLL_TRACE(_T("SymFromAddr(%p) failed ..."), address);
+			break;
+		}
+
+		strSymStr = pInfo->Name;
+
+	} while (false);
+
+	g_DbgHelper.m_pSymCleanup(hProcess);
+
+	return strSymStr;
+}
+
+_tstring CMisc::AddrModuleName(DWORD64 address)
+{
+	HMODULE handle;
+	if (FALSE == GetModuleHandleEx(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS, (LPCTSTR)address, &handle))
+	{
+		DLL_TRACE(_T("GetModuleHandleExA(%p) failed(0x%X) ..."), address, GetLastError());
+		return _T("");
+	}
+
+	TCHAR szFileName[MAX_PATH] = { 0 };
+	if (0 == GetModuleFileName(handle, szFileName, MAX_PATH))
+	{
+		DLL_TRACE(_T("GetModuleFileNameA(%p) failed ..."), handle);
+		return _T("");
+	}
+
+	DLL_TRACE(_T("AddrModuleName(%p) = %s"), address, szFileName);
+	return szFileName;
+}
+
+void CMisc::ShowTraceStarck()
+{
+	if (!g_DbgHelper.Init())
+	{
+		DLL_TRACE(_T("Load DbgHelp.dll failed!"));
+		return ;
+	}
+	constexpr int MAX_STACK_FRAMES = 12;
+	constexpr int FRAME_INFO_LEN = 2048;
+	constexpr int STACK_INFO_LEN = FRAME_INFO_LEN * MAX_STACK_FRAMES;
+	void *pStack[MAX_STACK_FRAMES];
+	static TCHAR szStackInfo[STACK_INFO_LEN] = { 0 };
+	static TCHAR szFrameInfo[FRAME_INFO_LEN] = { 0 };
+
+	DWORD Options = g_DbgHelper.m_pSymGetOptions();
+
+	Options = Options | SYMOPT_LOAD_LINES;
+	g_DbgHelper.m_pSymSetOptions(Options);
+
+	TCHAR SymbolPath[256] = { 0 };
+	GetCurrentDirectory(sizeof(SymbolPath) / sizeof(TCHAR), SymbolPath);
+
+	_tcscat_s(SymbolPath, _T(";"));
+	_tcscat_s(SymbolPath, g_szPDBPath);
+	HANDLE hProcess = GetCurrentProcess();
+	BOOL bRet = g_DbgHelper.m_pSymInitialize(hProcess, SymbolPath, TRUE);
+	if (FALSE == bRet)
+	{
+		DLL_TRACE(_T("SymInitialize error ..."));
+		return;
+	}
+
+	WORD frames = CaptureStackBackTrace(0, MAX_STACK_FRAMES, pStack, NULL);
+	_sntprintf_s(szStackInfo, FRAME_INFO_LEN - 1, _T("stack traceback:%d\n"), frames);
+
+	for (WORD i = 0; i < frames; ++i) {
+		DWORD64 address = (DWORD64)(pStack[i]);
+
+		DWORD64 displacementSym = 0;
+		SYMBOL_INFO_PACKAGE stSymbolInfo = { 0 };
+		stSymbolInfo.si.SizeOfStruct = sizeof(SYMBOL_INFO);
+		stSymbolInfo.si.MaxNameLen = MAX_SYM_NAME;
+
+		DWORD displacementLine = 0;
+		IMAGEHLP_LINE line = { sizeof(line) };
+
+		if (TRUE == g_DbgHelper.m_pSymFromAddr(hProcess, address, &displacementSym, &stSymbolInfo.si))
+		{
+			if (TRUE == g_DbgHelper.m_pSymGetLineFromAddr(hProcess, address, &displacementLine, &line))
+			{
+				_sntprintf_s(szFrameInfo, FRAME_INFO_LEN - 1, _T("\t0x%IX %s() at %s:%d\n"),
+					stSymbolInfo.si.Address, stSymbolInfo.si.Name, line.FileName, line.LineNumber);
+			}
+			else
+			{
+				_sntprintf_s(szFrameInfo, FRAME_INFO_LEN - 1, _T("\t0x%IX %s()\n"), stSymbolInfo.si.Address, stSymbolInfo.si.Name);
+			}
+		}
+		else
+		{
+			_sntprintf_s(szFrameInfo, FRAME_INFO_LEN - 1, _T("\t0x%IX can not find symbol\n"), address);
+		}
+
+		_tcscat_s(szStackInfo, szFrameInfo);
+	}
+	g_DbgHelper.m_pSymCleanup(hProcess);
+
+	DLL_TRACE(_T("%s"), szStackInfo);
+}
+
+
+void CMisc::ShowContextStackTrace(CONTEXT& cr)
+{
+	if (!g_DbgHelper.Init())
+	{
+		DLL_TRACE(_T("Load DbgHelp.dll failed!"));
+		return;
+	}
+
+	if (!g_DbgHelper.m_pStackWalk ||
+		!g_DbgHelper.m_pSymFunctionTableAccess ||
+		!g_DbgHelper.m_pSymGetModuleBase)
+	{
+		printf("DbgHelp.dll Leak interface!");
+		return;
+	}
+
+	TCHAR SymbolPath[256] = { 0 };
+	GetCurrentDirectory(sizeof(SymbolPath) / sizeof(TCHAR), SymbolPath);
+
+	_tcscat_s(SymbolPath, _T(";"));
+	_tcscat_s(SymbolPath, g_szPDBPath);
+
+	auto hProcess = GetCurrentProcess();
+	auto hThread = GetCurrentThread();
+	g_DbgHelper.m_pSymInitialize(hProcess, SymbolPath, TRUE);
+
+	DWORD dwMachineType = IMAGE_FILE_MACHINE_UNKNOWN;
+
+	STACKFRAME sf = { 0 };
+#ifdef _IMAGEHLP64
+	dwMachineType = IMAGE_FILE_MACHINE_AMD64;
+	sf.AddrPC.Offset = cr.Rip;
+	sf.AddrPC.Mode = AddrModeFlat;
+	sf.AddrFrame.Offset = cr.Rbp;
+	sf.AddrFrame.Mode = AddrModeFlat;
+	sf.AddrStack.Offset = cr.Rsp;
+	sf.AddrStack.Mode = AddrModeFlat;
+#else
+	dwMachineType = IMAGE_FILE_MACHINE_I386;
+	sf.AddrPC.Offset = cr.Eip;
+	sf.AddrPC.Mode = AddrModeFlat;
+	sf.AddrFrame.Offset = cr.Ebp;
+	sf.AddrFrame.Mode = AddrModeFlat;
+	sf.AddrStack.Offset = cr.Esp;
+	sf.AddrStack.Mode = AddrModeFlat;
+#endif
+
+	while (g_DbgHelper.m_pStackWalk(dwMachineType, hProcess, hThread, &sf, &cr, 0, g_DbgHelper.m_pSymFunctionTableAccess, g_DbgHelper.m_pSymGetModuleBase, nullptr))
+	{
+		auto address = sf.AddrPC.Offset;
+		DWORD64 dwDisplacement = 0;
+		SYMBOL_INFO_PACKAGE symbol = { 0 };
+		symbol.si.SizeOfStruct = sizeof(symbol.si);
+		symbol.si.MaxNameLen = sizeof(symbol.name) / sizeof(TCHAR);
+		if (g_DbgHelper.m_pSymFromAddr && TRUE == g_DbgHelper.m_pSymFromAddr(hProcess, address, &dwDisplacement, &symbol.si))
+		{
+			DWORD dwLineDisplacement = 0;
+			IMAGEHLP_LINE line = { sizeof(line) };
+			if (g_DbgHelper.m_pSymGetLineFromAddr && TRUE == g_DbgHelper.m_pSymGetLineFromAddr(hProcess, address, &dwLineDisplacement, &line))
+			{
+				_tprintf(_T("\t%IX %s + %Id(%s:%u)\n"), address, symbol.si.Name, dwDisplacement, line.FileName, line.LineNumber);
+			}
+			else
+			{
+				_tprintf(_T("\t%IX %s + %Id\n"), address, symbol.si.Name, dwDisplacement);
+			}
+		}
+		else
+		{
+			_tprintf(_T("\t%IX Cannot find symbol!\n"), address);
+		}
+	}
+
+	g_DbgHelper.m_pSymCleanup(hProcess);
+}
 
 BOOL
 CALLBACK MY_PSYM_ENUMERATESYMBOLS_CALLBACK(
@@ -192,8 +411,8 @@ CALLBACK MY_PSYM_ENUMERATESYMBOLS_CALLBACK(
 	if (pFile)
 	{
 		TCHAR szTmp[MAX_SYM_NAME] = { 0 };
-		_sntprintf_s(szTmp, sizeof(szTmp) / sizeof(TCHAR), _T("%s\n"), pSymInfo->Name);
-		fwrite(szTmp, 1, sizeof(TCHAR) * (pSymInfo->NameLen + 1), pFile);
+		_sntprintf_s(szTmp, MAX_SYM_NAME - 1, _T("%s\n"), pSymInfo->Name);
+		fwrite(szTmp, 1, pSymInfo->NameLen + 1, pFile);
 	}
 	else
 	{
@@ -202,8 +421,14 @@ CALLBACK MY_PSYM_ENUMERATESYMBOLS_CALLBACK(
 	return TRUE;
 }
 
-void CMisc::PrintModuleSymbols(PCTSTR szModuleName, PCSTR szSaveFile)
+void CMisc::PrintModuleSymbols(PCTSTR szModuleName, PCTSTR szSaveFile)
 {
+	if (!g_DbgHelper.Init())
+	{
+		DLL_TRACE(_T("Load DbgHelp.dll failed!"));
+		return;
+	}
+
 	HMODULE hMod = 0;
 	HANDLE hProcess = 0;
 	DWORD64 BaseOfDll = 0;
@@ -211,10 +436,10 @@ void CMisc::PrintModuleSymbols(PCTSTR szModuleName, PCSTR szSaveFile)
 	PVOID pRet = NULL;
 	FILE* pFile = NULL;
 
-	DWORD Options = SymGetOptions();
+	DWORD Options = g_DbgHelper.m_pSymGetOptions();
 
 	Options = Options & ~SYMOPT_UNDNAME;
-	SymSetOptions(Options);
+	g_DbgHelper.m_pSymSetOptions(Options);
 
 	if (szModuleName)
 	{
@@ -229,13 +454,6 @@ void CMisc::PrintModuleSymbols(PCTSTR szModuleName, PCSTR szSaveFile)
 
 	do
 	{
-		hProcess = GetCurrentProcess();
-		BOOL bRet = SymInitialize(hProcess, 0, FALSE);
-		if (FALSE == bRet)
-		{
-			DLL_TRACE(_T("SymInitialize error ..."));
-			break;
-		}
 
 		TCHAR SymbolPath[256];
 		GetCurrentDirectory(sizeof(SymbolPath) / sizeof(TCHAR), SymbolPath);
@@ -243,22 +461,24 @@ void CMisc::PrintModuleSymbols(PCTSTR szModuleName, PCSTR szSaveFile)
 		_tcscat_s(SymbolPath, _T(";"));
 		_tcscat_s(SymbolPath, g_szPDBPath);
 
-		SymSetSearchPath(hProcess, SymbolPath);
+		hProcess = GetCurrentProcess();
+		BOOL bRet = g_DbgHelper.m_pSymInitialize(hProcess, SymbolPath, FALSE);
+		if (FALSE == bRet)
+		{
+			DLL_TRACE(_T("SymInitialize error ..."));
+			break;
+		}
 
-		TCHAR FileName[256];
-		GetCurrentDirectory(sizeof(FileName) / sizeof(TCHAR), FileName);
-		_tcscat_s(FileName, _T("\\"));
-		_tcscat_s(FileName, szModuleName);
-		BaseOfDll = SymLoadModuleEx(hProcess, NULL, FileName, NULL, (DWORD64)hMod, 0, NULL, 0);
+		BaseOfDll = g_DbgHelper.m_pSymLoadModule(hProcess, NULL, TSTRCONV(g_szAppPathName).c_str(), TSTRCONV(szModuleName).c_str(), (DWORD64)hMod, 0);
 		if (BaseOfDll == 0)
 		{
-			DLL_TRACE(_T("SymLoadModule %s error code:%d"), FileName, GetLastError());
+			DLL_TRACE(_T("SymLoadModule %s error code:%d"), szModuleName, GetLastError());
 			break;
 		}
 
 		if (szSaveFile)
 		{
-			if (0 != fopen_s(&pFile, szSaveFile, "wb"))
+			if (0 != _tfopen_s(&pFile, szSaveFile, _T("wb")))
 			{
 				DLL_TRACE(_T("Open file:%s failed! code:%d"), szSaveFile, GetLastError());
 				break;
@@ -266,14 +486,14 @@ void CMisc::PrintModuleSymbols(PCTSTR szModuleName, PCSTR szSaveFile)
 		}
 
 		TCHAR szMask[256] = { 0 };
-		_sntprintf_s(szMask, sizeof(szMask) / sizeof(TCHAR), _T("%s\n"), szModuleName);
-		SymEnumSymbols(hProcess, BaseOfDll, szMask, MY_PSYM_ENUMERATESYMBOLS_CALLBACK, pFile);
+		_sntprintf_s(szMask, sizeof(szMask) / sizeof(TCHAR) - 1, _T("%s\n"), szModuleName);
+		g_DbgHelper.m_pSymEnumSymbols(hProcess, BaseOfDll, szMask, MY_PSYM_ENUMERATESYMBOLS_CALLBACK, pFile);
 
 	} while (false);
 
 	if (BaseOfDll != 0)
 	{
-		BOOL bRet = SymUnloadModule(hProcess, BaseOfDll);
+		BOOL bRet = g_DbgHelper.m_pSymUnloadModule(hProcess, BaseOfDll);
 		if (bRet == FALSE)
 		{
 			DLL_TRACE(_T("SymUnloadModule Failed! err:%d"), GetLastError());
@@ -281,7 +501,7 @@ void CMisc::PrintModuleSymbols(PCTSTR szModuleName, PCSTR szSaveFile)
 		BaseOfDll = 0;
 	}
 
-	SymCleanup(hProcess);
+	g_DbgHelper.m_pSymCleanup(hProcess);
 
 	if (pFile)
 	{
@@ -319,7 +539,6 @@ BOOL CMisc::InitConsole(HINSTANCE hIns)
 	return 0 == freopen_s(&g_OutStream, "CONOUT$", "w", stdout);
 }
 
-#define DEBUG_SETTING_PATH _T(".\\GDebugInfo.ini")
 BOOL CMisc::InitData()
 {
 	DWORD dwRet = ::GetPrivateProfileString(_T("Debug"), _T("PDB"), _T("."), g_szPDBPath, sizeof(g_szPDBPath) / sizeof(TCHAR), DEBUG_SETTING_PATH);
@@ -345,9 +564,9 @@ BOOL CMisc::UnInitConsole()
 	return TRUE;
 }
 
-BOOL CMisc::InitSharedMemory()
+BOOL CMisc::InitSharedMemory(LPCTSTR szName)
 {
-	g_hOutChnl = ProcChnl::CreateChannel(_T("DllInject"), MAX_CHANNEL_BUFF_SIZE);
+	g_hOutChnl = ProcChnl::CreateChannel(szName, MAX_CHANNEL_BUFF_SIZE);
 	return VALID_CHANNEL(g_hOutChnl);
 }
 
@@ -382,6 +601,8 @@ BOOL CMisc::EndWork()
 
 BOOL CMisc::StartWork(HINSTANCE hIns)
 {
+	GetModuleFileName(0, g_szAppPathName, sizeof(g_szAppPathName) / sizeof(TCHAR));
+
 	InitData();
 	if (TRUE == g_bConsole)
 	{
@@ -389,7 +610,15 @@ BOOL CMisc::StartWork(HINSTANCE hIns)
 	}
 	else
 	{
-		InitSharedMemory();
+		TCHAR szFileName[MAX_PATH] = { 0 };
+		auto dwRet = GetModuleFileName(hIns, szFileName, MAX_PATH);
+		if (dwRet == 0)
+		{
+			DLL_TRACE(_T("GetModuleFileName Failed!"));
+			return FALSE;
+		}
+
+		InitSharedMemory(GetFileNameWithOutExt(szFileName).c_str());
 	}
 
 	return TRUE;
@@ -455,32 +684,118 @@ void CMisc::WriteLog(LPCTSTR szFmt, ...)
 
 void CMisc::WriteLogV(LPCTSTR szFmt, va_list _ArgList)
 {
+	_tstring strTime = GetNowTimeStr();
 	if (g_bConsole)
 	{
+		_tprintf(_T("[%s]"), strTime.c_str());
 		_vtprintf(szFmt, _ArgList);
 		_tprintf(_T("\r\n"));
 	}
 	else
 	{
-		TCHAR* pszTmp = new TCHAR[MAX_LOG_BUFF_SIZE] ;
-		memset(pszTmp, 0, MAX_LOG_BUFF_SIZE * sizeof(TCHAR));
-		int len = _vsntprintf_s(pszTmp, MAX_LOG_BUFF_SIZE, MAX_LOG_BUFF_SIZE - 3, szFmt, _ArgList);
-		if (len < 0)
+		TCHAR* szTmp = new TCHAR[MAX_LOG_BUFF_SIZE];
+		int iOff = _sntprintf_s(szTmp, MAX_LOG_BUFF_SIZE - 1, MAX_LOG_BUFF_SIZE, _T("[%s]"), strTime.c_str());
+		if (iOff < 0)
 		{
-			delete[]pszTmp;
+			delete[]szTmp;
 			return;
 		}
 
-		pszTmp[len++] = _T('\r');
-		pszTmp[len++] = _T('\n');
+		int len = _vsntprintf_s(szTmp + iOff, MAX_LOG_BUFF_SIZE - iOff - 3, MAX_LOG_BUFF_SIZE - iOff - 2, szFmt, _ArgList);
+		if (len < 0)
+		{
+			delete[]szTmp;
+			return;
+		}
+
+		len += iOff;
+
+		szTmp[len++] = _T('\r');
+		szTmp[len++] = _T('\n');
 		//szTmp[len++] = '\0';
 		if (TRUE == ProcChnl::CanWrite(g_hOutChnl, len * sizeof(TCHAR)))
 		{
-			ProcChnl::GWrite(g_hOutChnl, (unsigned char*)pszTmp, len * sizeof(TCHAR));
+			ProcChnl::GWrite(g_hOutChnl, (unsigned char*)szTmp, len * sizeof(TCHAR));
 		}
-
-		delete[]pszTmp;
+		delete[]szTmp;
 	}
+}
+
+_tstring CMisc::GetNowTimeStr()
+{
+	_tstring strTimeStr;
+	auto n = std::chrono::system_clock::now();
+	time_t now_t = std::chrono::system_clock::to_time_t(n);
+	tm now_tm;
+	localtime_s(&now_tm, &now_t);
+
+	TCHAR szTime[64] = { 0 };
+	_tcsftime(szTime, sizeof(szTime) / sizeof(TCHAR), _T("%F %T"), &now_tm);
+	strTimeStr = szTime;
+
+	TCHAR szMsTime[16] = { 0 };
+	auto ms = std::chrono::duration_cast<std::chrono::milliseconds>(n.time_since_epoch()) % 1000;
+	int iSize =_sntprintf_s(szMsTime, sizeof(szMsTime) / sizeof(TCHAR) - 1, _T(":%Id"), ms.count());
+	strTimeStr += szMsTime;
+
+	return strTimeStr;
+}
+
+std::string CMisc::W2M(const std::wstring& wstr)
+{
+	auto iSize = WideCharToMultiByte(CP_ACP, 0, wstr.c_str(), wstr.size(), NULL, 0, NULL, NULL);
+	char* pszMultiByte = new char[iSize];
+	memset(pszMultiByte, 0, iSize);
+	WideCharToMultiByte(CP_ACP, 0, wstr.c_str(), wstr.size(), pszMultiByte, iSize, NULL, NULL);
+	std::string strMultiByte = pszMultiByte;
+	delete[]pszMultiByte;
+	return strMultiByte;
+}
+
+std::wstring CMisc::M2W(const std::string& str)
+{
+	auto iSize = MultiByteToWideChar(CP_ACP, 0, str.c_str(), -1, NULL, 0);
+	wchar_t* pszWideChar = new wchar_t[iSize];
+	wmemset(pszWideChar, 0, iSize);
+	MultiByteToWideChar(CP_ACP, 0, str.c_str(), str.size(), pszWideChar, iSize);
+	std::wstring strWideChar = pszWideChar;
+	delete[]pszWideChar;
+	return strWideChar;
+}
+
+_tstring CMisc::GetFileName(_tstring strFilePathName)
+{
+	int iPos = strFilePathName.find_last_of(_T("\\"));
+	if (iPos != _tstring::npos)
+	{
+		return _tstring(strFilePathName.c_str() + iPos + 1);
+	}
+	return strFilePathName;
+}
+
+_tstring CMisc::GetFileNameWithOutExt(_tstring strFilePathName)
+{
+	int iPos1 = strFilePathName.find_last_of(_T("\\"));
+	int iPos2 = strFilePathName.find_last_of(_T("."));
+	if (iPos1 == _tstring::npos &&
+		iPos2 == _tstring::npos)
+	{
+		return strFilePathName;
+	}
+	else if (iPos2 == _tstring::npos)
+	{
+		return _tstring(strFilePathName.c_str() + iPos1 + 1);
+	}
+	else if (iPos1 == _tstring::npos)
+	{
+		return _tstring(strFilePathName.c_str(), iPos2 -1);
+	}
+	else if (iPos2 > iPos1)
+	{
+		return _tstring(strFilePathName.c_str() + iPos1 + 1, iPos2 - iPos1 - 1);
+	}
+
+	return strFilePathName;
 }
 
 PVOID CMisc::GetOldAddr(PVOID fnHook)
@@ -495,56 +810,26 @@ PVOID CMisc::GetOldAddr(PVOID fnHook)
 
 PVOID CMisc::GetFunctionsVaFromSymbols(PCTSTR szModuleName, PCTSTR szFunctionName, PCTSTR szSymPath/* = nullptr*/)
 {
-	HMODULE hMod = 0;
+	if (!g_DbgHelper.Init())
+	{
+		DLL_TRACE(_T("Load DbgHelp.dll failed!"));
+		return nullptr;
+	}
+
 	HANDLE hProcess = 0;
 	DWORD64 BaseOfDll = 0;
 	PIMAGEHLP_SYMBOL pSymbol = NULL;
 	PVOID pRet = NULL;
 
-	DWORD Options = SymGetOptions();
+	_tstring strAppName = GetFileName(g_szAppPathName);
+
+	DWORD Options = g_DbgHelper.m_pSymGetOptions();
 
 	Options = Options | SYMOPT_DEBUG;
-	SymSetOptions(Options);
-
-	TCHAR szAppPathName[256] = { 0 };
-	if (nullptr == szModuleName)
-	{
-		int iRead = GetModuleFileName(0, szAppPathName, 256);
-		if (0 == iRead)
-		{
-			DLL_TRACE(_T("Cannot GetModuleFileName!"));
-			return NULL;
-		}
-
-		hMod = GetModuleHandle(szAppPathName);
-
-		if (hMod == 0)
-		{
-			DLL_TRACE(_T("Cannot find module %s"), szAppPathName);
-			return NULL;
-		}
-	}
-	else
-	{
-		hMod = GetModuleHandle(szModuleName);
-
-		if (hMod == 0)
-		{
-			DLL_TRACE(_T("Cannot find module %s"), szModuleName);
-			return NULL;
-		}
-	}
-
+	g_DbgHelper.m_pSymSetOptions(Options);
 
 	do 
 	{
-		hProcess = GetCurrentProcess();
-		BOOL bRet = SymInitialize(hProcess, 0, FALSE);
-		if (FALSE == bRet)
-		{
-			DLL_TRACE(_T("SymInitialize error ..."));
-			break;
-		}
 		TCHAR SymbolPath[256];
 		GetCurrentDirectory(sizeof(SymbolPath) / sizeof(TCHAR), SymbolPath);
 
@@ -557,23 +842,41 @@ PVOID CMisc::GetFunctionsVaFromSymbols(PCTSTR szModuleName, PCTSTR szFunctionNam
 		_tcscat_s(SymbolPath, _T(";"));
 		_tcscat_s(SymbolPath, g_szPDBPath);
 
-		SymSetSearchPath(hProcess, SymbolPath);
+		hProcess = GetCurrentProcess();
+		BOOL bRet = g_DbgHelper.m_pSymInitialize(hProcess, SymbolPath, FALSE);
+		if (FALSE == bRet)
+		{
+			DLL_TRACE(_T("SymInitialize error ..."));
+			break;
+		}
 
-		TCHAR FileName[256] = { 0 };
+		std::string strLoadModule;
+		HMODULE hMod = NULL;
 		if (nullptr != szModuleName)
 		{
-			GetCurrentDirectory(sizeof(FileName) / sizeof(TCHAR), FileName);
-			_tcscat_s(FileName, _T("\\"));
-			_tcscat_s(FileName, szModuleName);
+			strLoadModule = TSTRCONV(szModuleName);
+			hMod = GetModuleHandle(szModuleName);
+			if (hMod == 0)
+			{
+				DLL_TRACE(_T("Cannot find module %s"), szModuleName);
+				break;
+			}
 		}
 		else
 		{
-			_tcscpy_s(FileName, szAppPathName);
+			strLoadModule = TSTRCONV(strAppName);
+			hMod = GetModuleHandle(strAppName.c_str());
+			if (hMod == 0)
+			{
+				DLL_TRACE(_T("Cannot find module %s"), strAppName.c_str());
+				break;
+			}
 		}
-		BaseOfDll = SymLoadModuleEx(hProcess, NULL, FileName, NULL, (DWORD64)hMod, 0, NULL, 0);
+
+		BaseOfDll = g_DbgHelper.m_pSymLoadModule(hProcess, NULL, TSTRCONV(g_szAppPathName).c_str(), strLoadModule.c_str(), (DWORD64)hMod, 0);
 		if (BaseOfDll == 0)
 		{
-			DLL_TRACE(_T("SymLoadModule %s error code:%d"), FileName, GetLastError());
+			DLL_TRACE(_T("SymLoadModule %s error code:%d"), szModuleName, GetLastError());
 			break;
 		}
 
@@ -584,20 +887,20 @@ PVOID CMisc::GetFunctionsVaFromSymbols(PCTSTR szModuleName, PCTSTR szFunctionNam
 		PSYMBOL_INFO pSym = (PSYMBOL_INFO)buffer;
 		pSym->SizeOfStruct = sizeof(SYMBOL_INFO);
 		pSym->MaxNameLen = MAX_SYM_NAME;
-		if (TRUE == SymFromName(hProcess, szFunctionName, pSym))
+		if (TRUE == g_DbgHelper.m_pSymFromName(hProcess, szFunctionName, pSym))
 		{
 			pRet = (PVOID)pSym->Address;
-			DLL_TRACE(_T("%s!%s: %llX"), szModuleName ? szModuleName : szAppPathName, szFunctionName, pRet);
+			DLL_TRACE(_T("%s!%s: %IX"), szModuleName ? szModuleName : strAppName.c_str(), szFunctionName, pRet);
 		}
 		else
 		{
-			DLL_TRACE(_T("Can not find symbol %s!%s"), szModuleName ? szModuleName : szAppPathName, szFunctionName);
+			DLL_TRACE(_T("Can not find symbol %s!%s"), szModuleName ? szModuleName : strAppName.c_str(), szFunctionName);
 		}
 	} while (false);
 
 	if (BaseOfDll != 0)
 	{
-		BOOL bRet = SymUnloadModule(hProcess, BaseOfDll);
+		BOOL bRet = g_DbgHelper.m_pSymUnloadModule(hProcess, BaseOfDll);
 		if (bRet == FALSE)
 		{
 			DLL_TRACE(_T("SymUnloadModule Failed! err:%d"), GetLastError());
@@ -605,7 +908,7 @@ PVOID CMisc::GetFunctionsVaFromSymbols(PCTSTR szModuleName, PCTSTR szFunctionNam
 		BaseOfDll = 0;
 	}
 
-	SymCleanup(hProcess);
+	g_DbgHelper.m_pSymCleanup(hProcess);
 
 	return pRet;
 }
