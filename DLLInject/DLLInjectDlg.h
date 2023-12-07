@@ -51,9 +51,10 @@ public:
 	BOOL PulledOutDLL();
 	void InsertInformation(TCHAR* szInfo, ...);
 	CString GetFileName(CString strPathName);
+	CString GetFileNameWithoutExt(CString strPathName);
 	DWORD GetPIDFromName(CString strExeName);
 	int CopyDebugIniFile(DWORD dwPID);
-	BOOL StartReadFromChannel();
+	BOOL StartReadFromChannel(LPCTSTR szName);
 	BOOL StopReadFromChannel();
 	BOOL LoadConfig();
 	BOOL SaveConfig();

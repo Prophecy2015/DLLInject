@@ -5,9 +5,9 @@
 #include <thread>
 #include <chrono>
 
-int Add(int a, int b)
+extern "C" _declspec(dllexport) int Add(int a, int b)
 {
-	return a + b - 123;
+	return a + b + 123;
 }
 
 int main()

@@ -321,7 +321,7 @@ BOOL CDLLInjectDlg::InjectedDLL()
 
 	if (m_stuConfig.iPrintMode == 0 )
 	{
-		StartReadFromChannel();
+		StartReadFromChannel(GetFileNameWithoutExt(m_strDLLName));
 		m_strLogInfo = _T("");
 	}
 	else
@@ -447,6 +447,30 @@ CString CDLLInjectDlg::GetFileName(CString strPathName)
 	return strPathName.Right(strPathName.GetLength() - iPos - 1);
 }
 
+CString CDLLInjectDlg::GetFileNameWithoutExt(CString strPathName)
+{
+	int iPos = strPathName.ReverseFind(_T('\\'));
+	int iPos1 = strPathName.ReverseFind(_T('.'));
+	if (-1 == iPos && -1 == iPos1)
+	{
+		return strPathName;
+	}
+	else if (-1 == iPos)
+	{
+		return strPathName.Left(iPos1);
+	}
+	else if (-1 == iPos1)
+	{
+		return strPathName.Right(strPathName.GetLength() - iPos - 1);
+	}
+	else if (iPos1 - iPos - 1 > 0)
+	{
+		return strPathName.Mid(iPos + 1, iPos1 - iPos - 1);
+	}
+
+	return strPathName;
+}
+
 void CDLLInjectDlg::OnBnClickedBtnInject()
 {
 	// TODO: 在此添加控件通知处理程序代码
@@ -567,13 +591,14 @@ int CDLLInjectDlg::CopyDebugIniFile(DWORD dwPID)
 	return 0;
 }
 
-BOOL CDLLInjectDlg::StartReadFromChannel()
+BOOL CDLLInjectDlg::StartReadFromChannel(LPCTSTR szName)
 {
 	m_bStopThread = FALSE;
+	CString strName = szName;
 	m_threadRead = std::thread(
-		[this]() {
+		[this, strName]() {
 
-		HCHANNEL s = ProcChnl::CreateChannel(_T("DllInject"), MAX_CHANNEL_BUFF_SIZE);
+		HCHANNEL s = ProcChnl::CreateChannel(strName, MAX_CHANNEL_BUFF_SIZE);
 		if (VALID_CHANNEL(s))
 		{
 			unsigned char* szTmp = new unsigned char[4096];
@@ -657,7 +682,7 @@ LRESULT CDLLInjectDlg::OnReadMemoryData(WPARAM wParam, LPARAM lParam)
 	int iSize = (int)lParam;
 	if (szMsg)
 	{
-		m_strLogInfo += (m_stuConfig.iCodePage == 1) ? FromUtf8((char*)szMsg) : CString((TCHAR*)szMsg, iSize / sizeof(TCHAR) );
+		m_strLogInfo += (m_stuConfig.iCodePage == 1) ? FromUtf8((char*)szMsg) : CString((LPCTSTR)szMsg, iSize / sizeof(TCHAR));
 		UpdateData(FALSE);
 		delete[]szMsg;
 		m_ctrlRichEdit.PostMessage(WM_VSCROLL, SB_BOTTOM, 0);

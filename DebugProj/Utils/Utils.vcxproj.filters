@@ -18,18 +18,24 @@
     <Text Include="ReadMe.txt" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="ProcChnl.h">
+    <ClInclude Include="DbgHelper.h">
       <Filter>头文件</Filter>
     </ClInclude>
     <ClInclude Include="Misc.h">
       <Filter>头文件</Filter>
     </ClInclude>
+    <ClInclude Include="ProcChnl.h">
+      <Filter>头文件</Filter>
+    </ClInclude>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="ProcChnl.cpp">
+    <ClCompile Include="DbgHelper.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="Misc.cpp">
+      <Filter>源文件</Filter>
+    </ClCompile>
+    <ClCompile Include="ProcChnl.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

@@ -63,7 +63,7 @@ BOOL CGlobal::CreateNameSpace() {
 		sa.nLength = sizeof(sa);
 		sa.bInheritHandle = FALSE;
 		if (!ConvertStringSecurityDescriptorToSecurityDescriptor(
-			TEXT("O:AOG:DAD:(A;;RPWPCCDCLCSWRCWDWOGA;;;S-1-0-0)"),
+			TEXT("D:(A;;GA;;;BA)"),
 			SDDL_REVISION_1, &sa.lpSecurityDescriptor, NULL))
 		{
 			break;
@@ -135,16 +135,30 @@ namespace ProcChnl {
 	{
 		CGlobal::GetInstance();
 
+
+		SECURITY_ATTRIBUTES SecAttr;
+		SECURITY_DESCRIPTOR SecDesc;
+
+		SecAttr.nLength = sizeof(SecAttr);
+		SecAttr.bInheritHandle = FALSE;
+		SecAttr.lpSecurityDescriptor = &SecDesc;
+
+		InitializeSecurityDescriptor(&SecDesc, SECURITY_DESCRIPTOR_REVISION);
+		SetSecurityDescriptorDacl(&SecDesc, TRUE, 0, FALSE);
+
 		HCHANNEL cnl = { 0 };
 
+		bool bCreate = false;
 		HANDLE hMap = ::OpenFileMapping(FILE_MAP_ALL_ACCESS, 0, szName);
 		if (NULL == hMap)
 		{
-			hMap = ::CreateFileMapping(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, iSize + sizeof(SHARED_HEAD), szName);
+			hMap = ::CreateFileMapping(INVALID_HANDLE_VALUE, &SecAttr, PAGE_READWRITE, 0, iSize + sizeof(SHARED_HEAD), szName);
 			if (NULL == hMap)
 			{
 				return cnl;
 			}
+
+			bCreate = true;
 		}
 
 		LPVOID pByte = ::MapViewOfFile(hMap, FILE_MAP_ALL_ACCESS, 0, 0, 0);
@@ -154,9 +168,14 @@ namespace ProcChnl {
 			return cnl;
 		}
 
-		TCHAR szChannelName[64] = { 0 };
-		_stprintf_s(szChannelName, _T("%s\\%s"), CHANNEL_NAMESPACE, szName);
-		cnl.hDataMutex = CreateMutex(NULL, FALSE, szChannelName);
+		if (bCreate)
+		{
+			memset(pByte, 0, sizeof(SHARED_HEAD));
+		}
+
+		TCHAR szTempName[64] = { 0 };
+		_sntprintf_s(szTempName, sizeof(szTempName) / sizeof(TCHAR) - 1, _T("%s\\%s"), CHANNEL_NAMESPACE, szName);
+		cnl.hDataMutex = CreateMutex(&SecAttr, FALSE, szTempName);
 		if (NULL == cnl.hDataMutex)
 		{
 			DWORD dwErr = GetLastError();
