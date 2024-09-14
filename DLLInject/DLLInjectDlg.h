@@ -7,6 +7,7 @@
 #include "afxwin.h"
 #include <thread>
 #include <mutex>
+#include <set>
 
 // CDLLInjectDlg ¶Ô»°¿ò
 class CDLLInjectDlg : public CDialogEx
@@ -52,7 +53,7 @@ public:
 	void InsertInformation(TCHAR* szInfo, ...);
 	CString GetFileName(CString strPathName);
 	CString GetFileNameWithoutExt(CString strPathName);
-	DWORD GetPIDFromName(CString strExeName);
+	std::set<DWORD> GetPIDFromName(CString strExeName);
 	int CopyDebugIniFile(DWORD dwPID);
 	BOOL StartReadFromChannel(LPCTSTR szName);
 	BOOL StopReadFromChannel();
@@ -62,6 +63,7 @@ public:
 	CString FromUtf8(const char* szUtf8);
 private:
 	CString m_strProcName;
+	DWORD m_dwSelPID;
 	CString m_strDLLName;
 	CString m_strDstIniPath;
 	BOOL m_bInjected;
