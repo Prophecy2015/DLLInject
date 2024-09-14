@@ -64,6 +64,7 @@ CDLLInjectDlg::CDLLInjectDlg(CWnd* pParent /*=NULL*/)
 	, m_bStopThread(FALSE)
 	, m_strLogInfo(_T(""))
 	, m_bPrintData(TRUE)
+	, m_dwSelPID(0)
 {
 	m_hIcon = AfxGetApp()->LoadIcon(IDR_MAINFRAME);
 }
@@ -207,6 +208,7 @@ void CDLLInjectDlg::OnBnClickedBtnSelPid()
 	if (IDOK == dlg.DoModal())
 	{
 		m_strProcName.Format(_T("%s"), dlg.GetSelExeName().GetBuffer());
+		m_dwSelPID = dlg.GetSelPID();
 		UpdateData(FALSE);
 	}
 }
@@ -238,14 +240,19 @@ BOOL CDLLInjectDlg::InjectedDLL()
 		return FALSE;
 	}
 
-	DWORD dwPID = GetPIDFromName(m_strProcName);
-	if (dwPID == 0)
+	std::set<DWORD> setPIDs = GetPIDFromName(m_strProcName);
+	if (setPIDs.empty())
 	{
-		InsertInformation(_T("无法打开%s进程.\n"), m_strProcName);
+		InsertInformation(_T("找不到%s进程.\n"), m_strProcName);
 		return FALSE;
 	}
 
-	CopyDebugIniFile(dwPID);
+	if (setPIDs.end() == setPIDs.find(m_dwSelPID))
+	{
+		m_dwSelPID = *setPIDs.begin();
+	}
+
+	CopyDebugIniFile(m_dwSelPID);
 
 	// Get process handle passing in the process ID
 	HANDLE hProcess = OpenProcess(
@@ -253,10 +260,10 @@ BOOL CDLLInjectDlg::InjectedDLL()
 		PROCESS_CREATE_THREAD |
 		PROCESS_VM_OPERATION |
 		PROCESS_VM_WRITE,
-		FALSE, dwPID);
+		FALSE, m_dwSelPID);
 	if (hProcess == NULL)
 	{
-		InsertInformation(_T("无法打开PID为%d的进程.\n"), dwPID);
+		InsertInformation(_T("无法打开PID为%d的进程.\n"), m_dwSelPID);
 		return FALSE;
 	}
 
@@ -271,7 +278,7 @@ BOOL CDLLInjectDlg::InjectedDLL()
 	HMODULE hModule = GetModuleHandle(_T("Kernel32.dll"));
 	if (0 == hModule)
 	{
-		InsertInformation(_T("进程(%d)中找不到模块Kernel32.dll!!! [%d]\n"), dwPID, GetLastError());
+		InsertInformation(_T("进程(%d)中找不到模块Kernel32.dll!!! [%d]\n"), m_dwSelPID, GetLastError());
 		return FALSE;
 	}
 
@@ -289,7 +296,7 @@ BOOL CDLLInjectDlg::InjectedDLL()
 	LPVOID pszLibFileRemote = (PWSTR)VirtualAllocEx(hProcess, NULL, dwSize + 1, MEM_COMMIT, PAGE_READWRITE);
 	if (pszLibFileRemote == NULL)
 	{
-		InsertInformation(_T("Could not allocate memory inside PID  (%d).\n"), dwPID);
+		InsertInformation(_T("Could not allocate memory inside PID  (%d).\n"), m_dwSelPID);
 		CloseHandle(hProcess);
 		return FALSE;
 	}
@@ -298,7 +305,7 @@ BOOL CDLLInjectDlg::InjectedDLL()
 	DWORD n = WriteProcessMemory(hProcess, pszLibFileRemote, (PVOID)m_strDLLName.GetBuffer(), dwSize, NULL);
 	if (n == 0)
 	{
-		InsertInformation(_T("无法向 PID [%d] 地址空间[%p]写入数据！\n"), dwPID, pszLibFileRemote);
+		InsertInformation(_T("无法向 PID [%d] 地址空间[%p]写入数据！\n"), m_dwSelPID, pszLibFileRemote);
 		VirtualFreeEx(hProcess, pszLibFileRemote, 0, MEM_RELEASE);
 		CloseHandle(hProcess);
 		return FALSE;
@@ -330,7 +337,7 @@ BOOL CDLLInjectDlg::InjectedDLL()
 	}
 	UpdateData(FALSE);
 
-	InsertInformation(_T("[%u]:调试库[%s]注入完成！"), dwPID, GetFileName(m_strDLLName));
+	InsertInformation(_T("[%u]:调试库[%s]注入完成！"), m_dwSelPID, GetFileName(m_strDLLName));
 	return TRUE;
 }
 
@@ -341,10 +348,16 @@ BOOL CDLLInjectDlg::PulledOutDLL()
 		StopReadFromChannel();
 	}
 
-	DWORD dwPID = GetPIDFromName(m_strProcName);
-	if (dwPID == 0)
+	//DWORD dwPID = GetPIDFromName(m_strProcName);
+	//if (dwPID == 0)
+	//{
+	//	InsertInformation(_T("无法打开%s进程.\n"), m_strProcName);
+	//	return FALSE;
+	//}
+
+	if (m_dwSelPID == 0)
 	{
-		InsertInformation(_T("无法打开%s进程.\n"), m_strProcName);
+		InsertInformation(_T("请选择需要卸载模块的进程！"));
 		return FALSE;
 	}
 
@@ -354,10 +367,10 @@ BOOL CDLLInjectDlg::PulledOutDLL()
 	BOOL bMore = FALSE, bFind = FALSE;
 	LPTHREAD_START_ROUTINE pThreadProc;
 
-	hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, dwPID);
+	hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, m_dwSelPID);
 	if (hSnapshot == NULL)
 	{
-		InsertInformation(_T("[PID:%d] GetModuleSnap Failed!.\n"), dwPID);
+		InsertInformation(_T("[PID:%d] GetModuleSnap Failed!.\n"), m_dwSelPID);
 		return FALSE;
 	}
 	bMore = Module32First(hSnapshot, &me);
@@ -377,17 +390,17 @@ BOOL CDLLInjectDlg::PulledOutDLL()
 		return FALSE;
 	}
 
-	hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, dwPID);
+	hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, m_dwSelPID);
 	if (!hProcess)
 	{
-		InsertInformation(_T("打开进程(%d) 失败!!! [%d]\n"), dwPID, GetLastError());
+		InsertInformation(_T("打开进程(%d) 失败!!! [%d]\n"), m_dwSelPID, GetLastError());
 		CloseHandle(hSnapshot);
 		return FALSE;
 	}
 	hModule = GetModuleHandle(_T("Kernel32.dll"));
 	if (0 == hModule)
 	{
-		InsertInformation(_T("进程(%d)中找不到模块Kernel32.dll!!! [%d]\n"), dwPID, GetLastError());
+		InsertInformation(_T("进程(%d)中找不到模块Kernel32.dll!!! [%d]\n"), m_dwSelPID, GetLastError());
 		CloseHandle(hSnapshot);
 		return FALSE;
 	}
@@ -407,7 +420,7 @@ BOOL CDLLInjectDlg::PulledOutDLL()
 	GetExitCodeThread(hThread, &dwExitCode);
 	if (dwExitCode == 1)
 	{
-		InsertInformation(_T("[%u]:调试库[%s]卸载完成！"), dwPID, GetFileName(m_strDLLName));
+		InsertInformation(_T("[%u]:调试库[%s]卸载完成！"), m_dwSelPID, GetFileName(m_strDLLName));
 	}
 	else
 	{
@@ -498,17 +511,17 @@ void CDLLInjectDlg::OnBnClickedBtnInject()
 }
 
 
-DWORD CDLLInjectDlg::GetPIDFromName(CString strExeName)
+std::set<DWORD> CDLLInjectDlg::GetPIDFromName(CString strExeName)
 {
+	std::set<DWORD> setPIDs;
 	// 获取全部快照
 	HANDLE hProcessSnap = ::CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
 	if (INVALID_HANDLE_VALUE == hProcessSnap)
 	{
 		AfxMessageBox(_T("获取进程快照失败！"));
-		return 0;
+		return setPIDs;
 	}
 
-	DWORD dwPID = 0;
 	PROCESSENTRY32 pe32 = { sizeof(pe32) };
 	BOOL bRet = ::Process32First(hProcessSnap, &pe32);
 
@@ -516,14 +529,13 @@ DWORD CDLLInjectDlg::GetPIDFromName(CString strExeName)
 	{
 		if (strExeName == pe32.szExeFile)
 		{
-			dwPID = pe32.th32ProcessID;
-			break;
+			setPIDs.insert(pe32.th32ProcessID);
 		}
 
 		bRet = ::Process32Next(hProcessSnap, &pe32);
 	}
 
-	return dwPID;
+	return setPIDs;
 }
 
 
