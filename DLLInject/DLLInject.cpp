@@ -63,6 +63,12 @@ BOOL CDLLInjectApp::InitInstance()
 	// 激活“Windows Native”视觉管理器，以便在 MFC 控件中启用主题
 	CMFCVisualManager::SetDefaultManager(RUNTIME_CLASS(CMFCVisualManagerWindows));
 
+	if (FALSE == EnablePrivilegeDebug(TRUE))
+	{
+		AfxMessageBox(_T("当前用户权限不足，无法使用该工具！"));
+		return FALSE;
+	}
+
 	// 标准初始化
 	// 如果未使用这些功能并希望减小
 	// 最终可执行文件的大小，则应移除下列

@@ -42,7 +42,7 @@ struct CONFIG_INFO
 };
 
 
-
+BOOL EnablePrivilegeDebug(BOOL bEnable);
 
 
 
