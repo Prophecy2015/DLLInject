@@ -39,9 +39,6 @@
     <ClInclude Include="DebugSetDlg.h">
       <Filter>头文件</Filter>
     </ClInclude>
-    <ClInclude Include="ProcChnl.h">
-      <Filter>头文件</Filter>
-    </ClInclude>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="DLLInject.cpp">
@@ -57,9 +54,6 @@
       <Filter>源文件</Filter>
     </ClCompile>
     <ClCompile Include="DebugSetDlg.cpp">
-      <Filter>源文件</Filter>
-    </ClCompile>
-    <ClCompile Include="ProcChnl.cpp">
       <Filter>源文件</Filter>
     </ClCompile>
   </ItemGroup>

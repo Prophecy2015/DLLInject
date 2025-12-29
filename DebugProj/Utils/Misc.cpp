@@ -6,6 +6,7 @@
 #include <iostream>
 #include <sstream>
 #include <algorithm>
+#include <atomic>
 #include "TLHelp32.h"
 #include "ProcChnl.h"
 #include "time.h"
@@ -15,7 +16,7 @@
 
 FILE* g_OutStream = NULL;
 FILE* g_InStream = NULL;
-std::mutex g_mtxCall;
+std::atomic<int> g_activeCall(0);
 BOOL	   g_stop = FALSE;
 std::map<PVOID/*HOOK ADDR*/, PVOID/*OLD ADDR*/> g_mapHook;
 TCHAR g_szPDBPath[256] = { 0 };
@@ -583,10 +584,10 @@ BOOL CMisc::UnInitSharedMemory()
 
 BOOL CMisc::BeginWork()
 {
-	g_mtxCall.lock();
+	g_activeCall++;
 	if (g_stop == TRUE)
 	{
-		g_mtxCall.unlock();
+		g_activeCall--;
 		return FALSE;
 	}
 
@@ -595,12 +596,13 @@ BOOL CMisc::BeginWork()
 
 BOOL CMisc::EndWork()
 {
-	g_mtxCall.unlock();
+	g_activeCall--;
 	return TRUE;
 }
 
 BOOL CMisc::StartWork(HINSTANCE hIns)
 {
+	EnablePrivilegeDebug(true);
 	GetModuleFileName(0, g_szAppPathName, sizeof(g_szAppPathName) / sizeof(TCHAR));
 
 	InitData();
@@ -628,8 +630,11 @@ BOOL CMisc::StopWork()
 {
 	if (g_mapHook.size() > 0)
 	{
-		std::lock_guard<decltype(g_mtxCall)> lock(g_mtxCall);
 		g_stop = TRUE;
+		while (g_activeCall > 0)
+		{
+			std::this_thread::sleep_for(std::chrono::milliseconds(20));
+		}
 
 		BEGIN_TRANSACTION;
 
@@ -648,12 +653,12 @@ BOOL CMisc::StopWork()
 		UnInitSharedMemory();
 	}
 
+	EnablePrivilegeDebug(false);
 	return TRUE;
 }
 
 void CMisc::OnDetourAttach(std::function<PVOID(void)> fn, PVOID fnHook)
 {
-	std::lock_guard<decltype(g_mtxCall)> lock(g_mtxCall);
 	if (g_mapHook.find(fnHook) == g_mapHook.end())
 	{ 
 		PVOID pOld = fn(); 
@@ -796,6 +801,41 @@ _tstring CMisc::GetFileNameWithOutExt(_tstring strFilePathName)
 	}
 
 	return strFilePathName;
+}
+
+_tstring CMisc::FormatHex(BYTE * buf, int len)
+{
+	_tstring tt;
+	for (int i = 0; i < len; ++i) {
+		TCHAR temp[4] = { 0 };
+		_sntprintf_s(temp, 4, _T("%02X "), buf[i]);
+		tt.append(temp);
+	}
+	return tt;
+}
+
+BOOL CMisc::EnablePrivilegeDebug(BOOL bEnable)
+{
+	BOOL bRet = FALSE;
+	HANDLE hToken;
+	if (FALSE == OpenProcessToken(GetCurrentProcess(), TOKEN_ADJUST_PRIVILEGES, &hToken))
+	{
+		return FALSE;
+	}
+	TOKEN_PRIVILEGES tp;
+	tp.PrivilegeCount = 1;
+	tp.Privileges[0].Attributes = bEnable ? SE_PRIVILEGE_ENABLED : 0;
+	if (TRUE == LookupPrivilegeValue(NULL, SE_CREATE_GLOBAL_NAME, &tp.Privileges[0].Luid)) {
+		bRet = AdjustTokenPrivileges(hToken, FALSE, &tp, sizeof(tp), NULL, NULL);
+		if (FALSE == bRet)
+		{
+			printf("AdjustTokenPrivileges FALSE = %u", GetLastError());
+		}
+	}
+
+	CloseHandle(hToken);
+
+	return bRet;
 }
 
 PVOID CMisc::GetOldAddr(PVOID fnHook)

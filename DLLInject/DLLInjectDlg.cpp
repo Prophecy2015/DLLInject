@@ -270,7 +270,7 @@ BOOL CDLLInjectDlg::InjectedDLL()
 #ifdef _UNICODE
 	const char* szFunc = "LoadLibraryW";
 #else
-	const char* szFunc = "LoadLibrary";
+	const char* szFunc = "LoadLibraryA";
 #endif
 
 	// Get the real address of LoadLibraryW in Kernel32.dll

@@ -212,6 +212,10 @@ public:
 	static _tstring GetFileName(_tstring strFilePathName);
 
 	static _tstring GetFileNameWithOutExt(_tstring strFilePathName);
+
+	static _tstring FormatHex(BYTE* buf, int len);
+
+	static BOOL EnablePrivilegeDebug(BOOL bEnable);
 };
 
 // 通过PDB符号拦截接口

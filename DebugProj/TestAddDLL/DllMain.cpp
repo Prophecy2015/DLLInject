@@ -8,8 +8,9 @@ int AddHook(int a, int b)
 	if (CMisc::BeginWork())
 	{
 		auto iRet = CALL_OLD(AddHook)(a, b);
-
-		DLL_TRACE(_T("Call Add(%d, %d) = %d"), a, b, iRet);
+		
+		BYTE data[64] = { 11,22,33,44,55,66,77,88,99 };
+		DLL_TRACE(_T("Call Add(%d, %d) = %d (%s)"), a, b, iRet, CMisc::FormatHex(data, 9));
 
 		CMisc::EndWork();
 		return iRet;

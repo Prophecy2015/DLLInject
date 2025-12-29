@@ -40,20 +40,41 @@ BOOL CGlobal::CreateNameSpace() {
 	BOOL bRet = FALSE;
 	do
 	{
-		// Create a SID corresponding to the Local Administrator group
-		BYTE localAdminSID[SECURITY_MAX_SID_SIZE];
-		PSID pLocalAdminSID = &localAdminSID;
-		DWORD cbSID = sizeof(localAdminSID);
-		if (!CreateWellKnownSid(
-			WinBuiltinAdministratorsSid, NULL, pLocalAdminSID, &cbSID)
-			) {
+		// 2. === 关键步骤：获取当前用户SID并添加到边界 ===
+		HANDLE hToken = NULL;
+		DWORD dwTokenInfoSize = 0;
+		PTOKEN_USER pTokenUser = NULL;
+		// Check the private namespace creation result
+		DWORD dwError = 0;
+
+		// 2.1 打开当前进程的令牌
+		if (!OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &hToken)) {
+			dwError = GetLastError();
+			printf("OpenProcessToken 失败! 错误: %d\n", dwError);
+			break;
+		}
+
+		// 2.2 获取所需缓冲区大小
+		GetTokenInformation(hToken, TokenUser, NULL, 0, &dwTokenInfoSize);
+		if (GetLastError() != ERROR_INSUFFICIENT_BUFFER) {
+			dwError = GetLastError();
+			printf("GetTokenInformation(获取大小) 失败! 错误: %d\n", dwError);
+			break;
+		}
+
+		// 2.3 分配内存并获取用户SID信息
+		pTokenUser = (PTOKEN_USER)HeapAlloc(GetProcessHeap(), HEAP_ZERO_MEMORY, dwTokenInfoSize);
+		if (!pTokenUser ||
+			!GetTokenInformation(hToken, TokenUser, pTokenUser, dwTokenInfoSize, &dwTokenInfoSize)) {
+			dwError = GetLastError();
+			printf("获取TokenUser信息失败! 错误: %d\n", dwError);
 			break;
 		}
 
 		// Associate the Local Admin SID to the boundary descriptor
 		// --> only applications running under an administrator user
 		//     will be able to access the kernel objects in the same namespace
-		if (!AddSIDToBoundaryDescriptor(&m_hBoundary, pLocalAdminSID)) {
+		if (!AddSIDToBoundaryDescriptor(&m_hBoundary, pTokenUser->User.Sid)) {
 			break;
 		}
 
