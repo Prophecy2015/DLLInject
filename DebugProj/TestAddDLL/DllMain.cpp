@@ -22,7 +22,7 @@ int AddHook(int a, int b)
 extern "C" void DoDebugWork()
 {
 	BEGIN_TRANSACTION;
-	DETOUR_ATTACH_EXPORT(_T("TestApp.exe"), _T("Add"), AddHook);
+	DETOUR_ATTACH_EXPORT(_T("TestApp_d.exe"), _T("Add"), AddHook);
 	END_TRANSACTION;
 }
 

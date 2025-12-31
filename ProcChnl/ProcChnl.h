@@ -12,16 +12,16 @@ struct SHARED_HEAD
 
 struct SHARED_MEM 
 {
-	int    iValidFlag;	// 0-invalid, 1-valid
+	int iValidFlag;	//0-invalid,1-valid
 	HANDLE hMap;
-	PBYTE  pByte;
+	PBYTE pByte;
 	HANDLE hDataMutex;
-	HANDLE hStopMutex;
+	HANDLE hStopEvent; // replaced stop mutex with an event
 };
 
 #define SHARED_DATA_PTR(c) (c.pByte + sizeof(SHARED_HEAD))
 #define SHARED_DATA_LEN(c) (((SHARED_HEAD*)c.pByte)->iUsedSize)
-#define VALID_CHANNEL(c) (c.iValidFlag == 1)
+#define VALID_CHANNEL(c) (c.iValidFlag ==1)
 
 typedef SHARED_MEM HCHANNEL;
 

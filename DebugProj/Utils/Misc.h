@@ -15,6 +15,12 @@
 #pragma comment(lib, "Utils.lib")
 #endif
 
+#ifdef _WIN64
+#pragma comment(lib, "ProcChnl_x64.lib")
+#else
+#pragma comment(lib, "ProcChnl_x86.lib")
+#endif
+
 #ifndef LLONG
 #ifdef _WIN64
 #define LLONG   INT64
